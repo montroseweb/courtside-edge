@@ -1,0 +1,33 @@
+[build]
+  command = "node tools/build.js"
+  publish = "dist"
+
+[[redirects]]
+  from = "/x/espn/*"
+  to = "https://site.api.espn.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/x/espnweb/*"
+  to = "https://site.web.api.espn.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/x/nba/*"
+  to = "https://cdn.nba.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/x/kalshi/*"
+  to = "https://external-api.kalshi.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/x/kalshi2/*"
+  to = "https://api.elections.kalshi.com/:splat"
+  status = 200
+  force = true

@@ -1,0 +1,23 @@
+<header class="taskbar">
+  <div class="orb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#3a1400" stroke-width="1.3"><circle cx="12" cy="12" r="10.2"/><path d="M1.8 12h20.4M12 1.8v20.4M4.6 4.9c3.2 3 3.2 11.2 0 14.2M19.4 4.9c-3.2 3-3.2 11.2 0 14.2"/></svg></div>
+  <div class="brand"><b>Courtside</b> <span>Edge</span></div>
+  <div class="feeds" id="feeds" aria-label="Feed status"></div>
+  <button class="gel iconbtn" id="btnSettings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+</header>
+<main class="page">
+  <div id="banner" hidden></div>
+  <nav class="datebar" id="dates" aria-label="Choose a date"></nav>
+  <section class="window ticker-w"><div class="titlebar"><span class="tb-t">Live Edge Ticker<small>best prices across the slate, newest first</small></span></div><div id="ticker"><p class="muted">Scanning markets…</p></div></section>
+  <section class="games" id="games"></section>
+  <p class="muted small">Scores: ESPN + NBA official live feed (fastest source wins). Prices: Kalshi public market data. Fair values are model estimates, not guarantees. Tap any court to open its Pick Finder.</p>
+</main>
+<div id="finder" class="finder" hidden></div>
+<div id="settings" class="sheet window" hidden role="dialog" aria-label="Settings">
+  <div class="titlebar"><span class="tb-t">Settings</span><button class="wb cl" id="setClose" aria-label="Close settings">✕</button></div>
+  <div class="sbody">
+    <p>Feeds load through this site's built-in proxy when hosted on Vercel or Netlify, then fall back to direct requests. If a feed's light stays red, paste a CORS proxy prefix here (the included Cloudflare Worker works); use <code>{url}</code> as a placeholder or the target URL is appended.</p>
+    <label for="proxyIn">Custom proxy prefix</label>
+    <input id="proxyIn" type="text" placeholder="https://your-proxy.workers.dev/?url=" autocomplete="off" spellcheck="false">
+    <div class="row"><button class="gel primary" id="proxySave">Save &amp; reconnect</button><button class="gel" id="liveBtn">Live feeds</button><button class="gel" id="demoBtn">Demo simulation</button><button class="gel" id="clearBtn">Clear cache</button></div>
+  </div>
+</div>

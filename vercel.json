@@ -1,0 +1,15 @@
+{
+  "buildCommand": "node tools/build.js",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/x/espn/:path*", "destination": "https://site.api.espn.com/:path*" },
+    { "source": "/x/espnweb/:path*", "destination": "https://site.web.api.espn.com/:path*" },
+    { "source": "/x/nba/:path*", "destination": "https://cdn.nba.com/:path*" },
+    { "source": "/x/kalshi/:path*", "destination": "https://external-api.kalshi.com/:path*" },
+    { "source": "/x/kalshi2/:path*", "destination": "https://api.elections.kalshi.com/:path*" }
+  ],
+  "headers": [
+    { "source": "/x/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+  ]
+}
