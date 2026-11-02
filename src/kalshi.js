@@ -17,7 +17,8 @@ const KALSHI = (() => {
     byGame: new Map(),     // gameKey → Map(ticker → market)
     games: new Map(),      // gameKey → game (from app)
     tasks: new Map(),      // task id → {last, busy}
-    discovered: 0, lastEventScan: 0, ok: false, err: '', updated: 0,
+    discovered: 0, lastEventScan: 0, ok: false, err: '', updated: 0, reached: 0,
+    diag: { events: 0, matched: new Set(), unmatched: new Set(), lastScanErrors: 0 },
   };
   const listeners = new Set();
   const notify = (keys) => listeners.forEach((f) => { try { f(keys); } catch (e) { console.error(e); } });
@@ -35,6 +36,19 @@ const KALSHI = (() => {
     return { series, date, away: pair[0], home: pair[1], key: gameKey(date, pair[0], pair[1]) };
   }
 
+  // map a Kalshi event to one of our games: exact key, else same teams (either order) within ±1 day
+  const MONI = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+  const codeToKey = (dc) => '20' + dc.slice(0, 2) + String(MONI[dc.slice(2, 5)] || 0).padStart(2, '0') + dc.slice(5, 7);
+  const dayDiff = (a, b) => Math.round((Date.UTC(+a.slice(0, 4), +a.slice(4, 6) - 1, +a.slice(6, 8)) - Date.UTC(+b.slice(0, 4), +b.slice(4, 6) - 1, +b.slice(6, 8))) / 864e5);
+  function resolveKey(p) {
+    if (S.games.has(p.key)) return p.key;
+    const dk = codeToKey(p.date);
+    for (const g of S.games.values()) {
+      const same = g.away.code === p.away && g.home.code === p.home, swap = g.away.code === p.home && g.home.code === p.away;
+      if ((same || swap) && Math.abs(dayDiff(g.dateKey, dk)) <= 1) return g.kkey;
+    }
+    return null;
+  }
   const dollars = (d, c) => { const v = U.num(d); if (v != null) return v; const cc = U.num(c); return cc != null ? cc / 100 : null; };
 
   function segOf(series, text) {
@@ -160,8 +174,14 @@ const KALSHI = (() => {
       if (!m?.ticker) continue;
       const et = m.event_ticker || fallbackEvent;
       let info = S.events.get(et);
-      if (!info) { const p = parseEventTicker(et); if (!p) continue; info = { ticker: et, series: p.series, key: p.key }; S.events.set(et, info); }
+      if (!info || !S.games.has(info.key)) {
+        const p = parseEventTicker(et); if (!p) continue;
+        const key = resolveKey(p);
+        info = { ticker: et, series: p.series, key: key || p.key }; S.events.set(et, info);
+        if (!key) { S.diag.unmatched.add(et.split('-').slice(1, 2)[0]); continue; }
+      }
       if (!S.games.has(info.key)) continue;
+      S.diag.matched.add(info.key);
       const st = String(m.status || '').toLowerCase();
       if (st && !/active|open|initialized/.test(st)) { S.markets.delete(m.ticker); S.byGame.get(info.key)?.delete(m.ticker); continue; }
       const nm = normalize(m, info);
@@ -175,44 +195,50 @@ const KALSHI = (() => {
   }
 
   async function discover() {
-    let series = null;
     const cached = !NET.isDemo() && U.store.get('kseries');
-    if (cached && Date.now() - cached.t < 6 * 3600e3 && cached.list?.length) series = cached.list;
-    if (!series) {
-      try {
-        const j = await NET.get('kalshi', `${V}/series?category=Sports`, { priority: 5 });
-        series = (j?.series || []).map((s) => s.ticker).filter((t) => /^KXNBA/.test(t) && !NOT_GAME.test(t));
-        if (!series.length) series = null;
-      } catch (e) { S.err = e.message; }
-      if (!series) series = FALLBACK_SERIES;
-      else for (const f of FALLBACK_SERIES.slice(0, 7)) if (!series.includes(f)) series.push(f);
-      if (!NET.isDemo()) U.store.set('kseries', { t: Date.now(), list: series });
-    }
-    S.series = series;
-    await scanEvents();
+    S.series = cached && Date.now() - cached.t < 6 * 3600e3 && cached.list?.length ? cached.list : FALLBACK_SERIES.slice();
+    await scanEvents();            // core series first so prices appear fast
     S.discovered = Date.now();
+    if (!cached && !NET.viaRelay('kalshi')) {
+      // the full Sports series list is large; skip it on slow public relays
+      NET.get('kalshi', `${V}/series?category=Sports`, { priority: 2, timeout: 15000 }).then((j) => {
+        const more = (j?.series || []).map((x) => x.ticker).filter((t) => /^KXNBA/.test(t) && !NOT_GAME.test(t));
+        if (!more.length) return;
+        const all = [...new Set([...FALLBACK_SERIES.slice(0, 7), ...more])];
+        U.store.set('kseries', { t: Date.now(), list: all });
+        const fresh = all.filter((t) => !S.series.includes(t));
+        S.series = all;
+        if (fresh.length) return scanEvents(fresh);
+      }).catch(() => { });
+    }
   }
 
-  async function scanEvents() {
+  async function scanEvents(only) {
     S.lastEventScan = Date.now();
-    const jobs = S.series.map(async (ser) => {
+    let errs = 0;
+    const list = only || S.series;
+    const jobs = list.map(async (ser) => {
       try {
         let cursor = '', pages = 0, hit = false;
         do {
           const j = await NET.get('kalshi', `${V}/events?series_ticker=${ser}&status=open&with_nested_markets=true&limit=200${cursor ? '&cursor=' + cursor : ''}`, { priority: 4 });
+          S.reached = Date.now();
           for (const ev of j?.events || []) {
             const p = parseEventTicker(ev.event_ticker);
             if (!p) continue;
-            hit = true;
-            S.events.set(ev.event_ticker, { ticker: ev.event_ticker, series: p.series, key: p.key, title: ev.title });
+            hit = true; S.diag.events++;
+            const key = resolveKey(p);
+            S.events.set(ev.event_ticker, { ticker: ev.event_ticker, series: p.series, key: key || p.key, title: ev.title });
+            if (!key) { S.diag.unmatched.add(ev.event_ticker.split('-')[1]); continue; }
             if (ev.markets) ingest(ev.markets, ev.event_ticker);
           }
           cursor = j?.cursor || ''; pages++;
         } while (cursor && pages < 4);
         if (hit) S.gameSeries.add(ser);
-      } catch (e) { if (e.code !== 404) S.err = e.message; }
+      } catch (e) { if (e.code !== 404) { S.err = e.message; errs++; } }
     });
     await Promise.all(jobs);
+    S.diag.lastScanErrors = errs;
   }
 
   async function pollSeries(ser, pri) {
@@ -250,16 +276,19 @@ const KALSHI = (() => {
   function tick(ctx) {
     if (!S.discovered) return;
     const run = (id, every, fn) => { const done = due(id, every); if (done) fn().catch((e) => { S.err = e.message; }).finally(done); };
-    run('scan', 5 * 60e3, scanEvents);
+    const relay = NET.viaRelay('kalshi');
+    // nothing found yet (blocked / slow relay / no games): keep retrying discovery every 30s
+    run('scan', S.gameSeries.size ? 5 * 60e3 : 30e3, () => scanEvents());
     const seriesList = [...S.gameSeries];
     for (const ser of seriesList) {
       const isLine = LINE_RE.test(ser);
-      const every = isLine ? (ctx.anyLive ? 2000 : ctx.soon ? 8000 : 25000) : (ctx.anyLive ? 9000 : ctx.soon ? 20000 : 60000);
+      let every = isLine ? (ctx.anyLive ? 2000 : ctx.soon ? 8000 : 25000) : (ctx.anyLive ? 9000 : ctx.soon ? 20000 : 60000);
+      if (relay) every = isLine ? (ctx.anyLive ? 8000 : 30000) : (ctx.anyLive ? 30000 : 90000);
       run('s:' + ser, every, () => pollSeries(ser, isLine ? 3 : 1));
     }
     if (ctx.focusKey) {
       const evs = [...S.events.values()].filter((e) => e.key === ctx.focusKey).map((e) => e.ticker);
-      if (evs.length) run('f:' + ctx.focusKey, ctx.focusLive ? 1200 : 6000, () => pollEvents(evs, 6));
+      if (evs.length) run('f:' + ctx.focusKey, relay ? (ctx.focusLive ? 5000 : 20000) : (ctx.focusLive ? 1200 : 6000), () => pollEvents(evs, 6));
     }
   }
 
@@ -269,7 +298,7 @@ const KALSHI = (() => {
     marketsFor: (key) => [...(S.byGame.get(key)?.values() || [])],
     hasGame: (key) => (S.byGame.get(key)?.size || 0) > 0,
     onUpdate: (f) => { listeners.add(f); return () => listeners.delete(f); },
-    status: () => ({ ok: S.ok, err: S.err, updated: S.updated, series: [...S.gameSeries], markets: S.markets.size }),
+    status: () => ({ ok: S.ok, err: S.err, updated: S.updated, reached: S.reached, discovered: S.discovered, series: [...S.gameSeries], markets: S.markets.size, events: S.diag.events, matched: S.diag.matched.size, unmatched: [...S.diag.unmatched].slice(0, 6), scanErrors: S.diag.lastScanErrors }),
     gameKey, parseEventTicker, _S: S,
   };
 })();

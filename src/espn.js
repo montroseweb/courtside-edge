@@ -42,7 +42,9 @@ const ESPN = (() => {
     const ml = (side) => U.num(o[side + 'TeamOdds']?.moneyLine ?? o.moneyline?.[side === 'home' ? 'home' : 'away']?.close?.odds ?? o.moneyline?.[side]?.current?.odds);
     let total = U.num(o.overUnder);
     if (total == null) { const s = o.total?.over?.close?.line ?? o.total?.over?.current?.line; if (s) total = U.num(String(s).replace(/[ou]/i, '')); }
-    return { provider: o.provider?.name || 'Sportsbook', details: det, spreadHome, total, mlHome: ml('home'), mlAway: ml('away') };
+    const so = (side) => U.num(o[side + 'TeamOdds']?.spreadOdds ?? o.pointSpread?.[side]?.close?.odds);
+    return { provider: o.provider?.name || 'Sportsbook', details: det, spreadHome, total, mlHome: ml('home'), mlAway: ml('away'),
+      spOddsHome: so('home'), spOddsAway: so('away'), overOdds: U.num(o.overOdds ?? o.total?.over?.close?.odds), underOdds: U.num(o.underOdds ?? o.total?.under?.close?.odds) };
   }
 
   function parseStatus(s) {

@@ -270,10 +270,10 @@ const APP = (() => {
         if (g.id === STATE.focus) continue;
         const rec = INTEL.get(g.id);
         const hasProps = KALSHI.marketsFor(g.kkey).some((m) => m.kind === 'prop');
-        const needProps = hasProps && rec && !rec.loading && rec.players.size === 0 && Date.now() - (g._bgAt || 0) > 10000;
+        const needProps = rec && !rec.loading && rec.players.size === 0 && Date.now() - (g._bgAt || 0) > 10000;
         if (!rec || needProps || Date.now() - (g._bgAt || 0) > (g.state === 'in' ? 60000 : 300000)) {
           g._bgAt = Date.now();
-          await INTEL.ensure(g, { props: hasProps });
+          await INTEL.ensure(g, { props: true }); // logs load even without Kalshi props (model picks)
           break; // one game per cycle to stay gentle
         }
         if (g.state === 'in' && g.nbaId && hasProps && (!g._boxAt || Date.now() - g._boxAt > 8000)) {
@@ -292,7 +292,7 @@ const APP = (() => {
       const fast = g.id === STATE.focus || g.state === 'in';
       if (!evalAt.get(g.id) || now - evalAt.get(g.id) > (fast ? 900 : 4000)) {
         evalAt.set(g.id, now);
-        if (KALSHI.hasGame(g.kkey)) g.eval = PICKS.evaluate(g);
+        g.eval = PICKS.evaluate(g); // always: Kalshi, sportsbook and model-only picks
       }
     }
   }

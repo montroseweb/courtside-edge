@@ -370,5 +370,5 @@ const MODEL = (() => {
     return { l5: hit(v.slice(0, 5)), l10: hit(v.slice(0, 10)), l20: hit(v.slice(0, 20)), season: hit(cur), streak: first ? streak : -streak, last: v.slice(0, 10), avg5: U.mean(v.slice(0, 5)), avg10: U.mean(v.slice(0, 10)) };
   }
 
-  return { SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
+  return { probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
 })();

@@ -15,6 +15,20 @@ const UI = (() => {
 
   const clearHash = () => { try { history.replaceState(null, '', location.pathname + location.search); } catch { location.hash = ''; } };
   const dur = (ms) => { const sec = Math.max(1, Math.round(ms / 1000)); return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + String(sec % 60).padStart(2, '0') + 's'; };
+  const DEPLOY = 'https://vercel.com/new/import?s=' + encodeURIComponent('https://github.com/montroseweb/courtside-edge');
+  function kalshiNote(g) {
+    const st = KALSHI.status(), h = NET.health('kalshi');
+    if (KALSHI.hasGame(g.kkey)) return '';
+    if (NET.isDemo()) return '';
+    const routes = NET.routes('kalshi').map((r) => `${U.esc(r.host)} (${r.kind}): ${U.esc(r.result)}`).join(' · ');
+    if (st.reached || st.ok) {
+      return `<div class="knote ok"><b>Kalshi connected</b> — ${st.events} NBA events found, none open for this game yet${st.unmatched.length ? ` (unmatched: ${U.esc(st.unmatched.join(', '))})` : ''}. Model and sportsbook picks are shown below.</div>`;
+    }
+    const blocked = h.level === 'down' || st.scanErrors > 0 || (st.discovered && !st.reached);
+    return `<div class="knote${blocked ? ' bad' : ''}"><b>${blocked ? 'Kalshi prices are blocked from this link.' : 'Connecting to Kalshi…'}</b> ${blocked ? 'Browsers can\'t call Kalshi directly and the free relays are refusing or rate-limiting. Until it connects, the picks below use the model and sportsbook lines; check each on Kalshi or Robinhood against its <b>Buy if ≤</b> price.' : 'Trying direct, then relay routes.'}
+      <a class="gel primary" href="${DEPLOY}" target="_blank" rel="noopener">Fix it: deploy my copy on Vercel (1 min)</a>
+      ${routes ? `<small>Routes tried: ${routes}</small>` : ''}</div>`;
+  }
   const teamSwatch = (t) => `<span class="sw" style="--c:#${t.color};--c2:#${t.alt}"></span>`;
   const logoImg = (t, cls = 'lg') => t.logo && !NET.isDemo() ? `<img class="${cls}" src="${U.esc(t.logo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'sw',style:'--c:#${t.color};--c2:#${t.alt}'}))">` : teamSwatch(t);
 
@@ -103,7 +117,8 @@ const UI = (() => {
     }
     const ev = g.eval;
     const n = ev ? ev.picks.filter((p) => p.playable).length : 0;
-    r.edges.innerHTML = ev ? (n ? `<b>${n}</b> edge${n > 1 ? 's' : ''} ›` : 'Pick Finder ›') : 'Pick Finder ›';
+    const topM = ev && !n ? (ev.models || [])[0] : null;
+    r.edges.innerHTML = ev ? (n ? `<b>${n}</b> edge${n > 1 ? 's' : ''} ›` : topM ? `Top pick: ${U.esc(topM.label)} ›` : 'Pick Finder ›') : 'Pick Finder ›';
     r.edges.classList.toggle('hot', n > 0);
     if (g.state === 'in' && g.lastPlay?.text) { r.lp.hidden = false; r.lp.textContent = g.lastPlay.text; } else r.lp.hidden = true;
     updateWP(c.el, g);
@@ -138,6 +153,10 @@ const UI = (() => {
     const all = [];
     for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of g.eval.picks) if (p.playable) all.push({ p, g });
     all.sort((a, b) => b.p.rating - a.p.rating);
+    if (!all.length) { // no priced edges anywhere (e.g. Kalshi blocked): show the strongest model picks
+      for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of (g.eval.models || []).slice(0, 3)) all.push({ p, g });
+      all.sort((a, b) => b.p.rating - a.p.rating);
+    }
     const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
     if (!all.length) {
       lastTickerHTML = '';
@@ -148,8 +167,8 @@ const UI = (() => {
       const fe = feedMap.get(p.id);
       return `<button class="tk tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
         <span class="tk-badge">${p.tier ? p.tier : 'OVR'}<b>${p.rating}</b></span>
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · buy ${p.side} ${U.cents(p.price)} → fair ${U.cents(p.fair)}</small></span>
-        <span class="tk-side"><b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : ''}${p.lag ? ' · LAG' : ''}</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? `${p.side} if ≤ ${U.cents(p.maxEntry)} · no live price` : p.book ? `${U.esc(p.book)} ${PICKS.fmtAm(p.am)} → fair ${U.cents(p.fair)}` : `buy ${p.side} ${U.cents(p.price)} → fair ${U.cents(p.fair)}`}</small></span>
+        <span class="tk-side">${p.modelOnly ? `<b>${U.pct(p.fair)}</b><small>model · ≤${U.cents(p.maxEntry)}</small>` : `<b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : ''}${p.lag ? ' · LAG' : ''}</small>`}</span>
       </button>`;
     }).join('');
     if (html !== lastTickerHTML) { el.innerHTML = html; lastTickerHTML = html; }
@@ -223,15 +242,16 @@ const UI = (() => {
     else if (F.filter === 'line') ps = ps.filter((p) => p.kind !== 'prop' && !p.seg);
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
-    const key = { rating: (p) => p.rating, edge: (p) => p.edge, roi: (p) => p.roi, conf: (p) => p.fair }[F.sort];
+    const key = { rating: (p) => p.rating, edge: (p) => p.edge ?? p.lean ?? 0, roi: (p) => p.roi ?? p.lean ?? 0, conf: (p) => p.fair }[F.sort];
     return [...ps].sort((a, b) => key(b) - key(a));
   }
 
+  const amOf = (pr) => (pr <= 0 || pr >= 1 ? '—' : pr >= 0.5 ? '−' + Math.round(pr / (1 - pr) * 100) : '+' + Math.round((1 - pr) / pr * 100));
   function entryBar(p) {
     const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
     return `<div class="entry" aria-label="Entry range">
-      <div class="eb"><i class="g" style="width:${pos(p.greatEntry)}"></i><i class="y" style="left:${pos(p.greatEntry)};width:${U.clamp((p.maxEntry - p.greatEntry) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.maxEntry)}"></i><b class="now" style="left:${pos(p.price)}"></b><b class="fair" style="left:${pos(p.fair)}"></b></div>
-      <div class="el"><span>Great ≤ <b>${U.cents(p.greatEntry)}</b></span><span>Max entry <b>${U.cents(p.maxEntry)}</b></span><span class="bad">Too expensive ≥ <b>${Math.round(p.maxEntry * 100) + 1}¢</b></span></div>
+      <div class="eb"><i class="g" style="width:${pos(p.greatEntry)}"></i><i class="y" style="left:${pos(p.greatEntry)};width:${U.clamp((p.maxEntry - p.greatEntry) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.maxEntry)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
+      <div class="el"><span>Great ≤ <b>${U.cents(p.greatEntry)}${p.book ? ' (' + amOf(p.greatEntry) + ')' : ''}</b></span><span>Max entry <b>${U.cents(p.maxEntry)}${p.book ? ' (' + amOf(p.maxEntry) + ')' : ''}</b></span><span class="bad">Too expensive ≥ <b>${Math.round(p.maxEntry * 100) + 1}¢</b></span></div>
     </div>`;
   }
 
@@ -242,19 +262,21 @@ const UI = (() => {
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
     if (fe && fe.active && Date.now() - fe.firstSeen < 90e3) chips.push('<span class="chipx new">NEW</span>');
-    if (!p.playable) chips.push('<span class="chipx pass">PASS</span>');
+    if (p.modelOnly) chips.push('<span class="chipx model">MODEL · NO LIVE PRICE</span>');
+    else if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
+    if (!p.playable && !p.modelOnly) chips.push('<span class="chipx pass">PASS</span>');
     return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.playable ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
       <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span>
-        <span class="pk-t"><b>${U.esc(p.label)}</b><small>${U.esc(p.sub)}</small><small class="buy">Buy <b>${p.side}</b> on “${U.esc(p.m.sub || p.m.title)}”</small></span>
+        <span class="pk-t"><b>${U.esc(p.label)}</b><small>${U.esc(p.sub)}</small><small class="buy">${p.book ? 'Bet' : 'Buy'} <b>${p.book ? U.esc(p.label) : p.side}</b>${p.book ? ' at ' + U.esc(p.book) : ` on “${U.esc(p.m.sub || p.m.title)}”`}</small></span>
         <span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
       <div class="pk-s">
         <div><label>Confidence</label><b>${U.pct(p.fair)}</b></div>
         <div><label>Real price</label><b>${U.cents(p.fair)}</b></div>
-        <div><label>Kalshi ask</label><b>${U.cents(p.price)}</b></div>
-        <div><label>Edge</label><b class="${p.edge > 0 ? 'pos' : 'neg'}">${U.signed(p.edge * 100, 1)}¢</b></div>
+        ${p.modelOnly ? `<div><label>Buy if ≤</label><b>${U.cents(p.maxEntry)}</b></div><div><label>${p.data.fp.liveBase ? 'Live swing' : 'Lean'}</label><b class="pos">+${(p.lean * 100).toFixed(1)}</b></div>`
+        : `<div><label>${p.book ? U.esc(p.book) : 'Kalshi ask'}</label><b>${p.book ? PICKS.fmtAm(p.am) : U.cents(p.price)}</b></div><div><label>Edge</label><b class="${p.edge > 0 ? 'pos' : 'neg'}">${U.signed(p.edge * 100, 1)}¢</b></div>`}
       </div>
       ${entryBar(p)}
-      <div class="pk-m">${chips.join('')}<span>ROI ${U.signed(p.roi * 100, 0)}%</span><span>¼-Kelly ${(p.kelly * 100).toFixed(1)}%</span><span>Spread ${Math.round(p.liq.spread * 100)}¢</span><span>${fe ? 'Found ' + U.ago(fe.firstSeen) + (fe.periodTag ? ' · ' + fe.periodTag : '') : ''}</span></div>
+      <div class="pk-m">${chips.join('')}${p.modelOnly ? '<span>Compare with the live price on Kalshi or Robinhood</span>' : `<span>ROI ${U.signed(p.roi * 100, 0)}%</span><span>¼-Kelly ${(p.kelly * 100).toFixed(1)}%</span>${p.book ? '' : `<span>Spread ${Math.round(p.liq.spread * 100)}¢</span>`}`}<span>${fe ? 'Found ' + U.ago(fe.firstSeen) + (fe.periodTag ? ' · ' + fe.periodTag : '') : ''}</span></div>
       <details${openDetails.has(p.id) ? ' open' : ''}><summary>Why — ${ev.length} data points</summary><ul>${ev.map((e) => `<li class="ev-${e.k}">${U.esc(e.t)}</li>`).join('')}</ul></details>
     </article>`;
   }
@@ -346,20 +368,28 @@ const UI = (() => {
     if (force || (now - lastListRender > 2500 && !busy())) {
       lastListRender = now;
       const ps = ev ? filtered(ev.picks) : [];
+      const ms = ev && !F.playable ? filtered(ev.models || []) : [];
       const total = ev ? ev.picks.length : 0;
-      $('#fCount').textContent = ev ? `${ev.picks.filter((p) => p.playable).length} +EV of ${total} priced` : '';
+      $('#fCount').textContent = ev ? (total ? `${ev.picks.filter((p) => p.playable).length} +EV of ${total} priced` : `${(ev.models || []).length} model picks`) : '';
       $('#fUpd').textContent = ev ? 'updated ' + U.ago(ev.at) : '';
       const pend = ev?.pending?.length || 0;
-      $('#fList').innerHTML = ps.length ? ps.slice(0, 60).map((p) => pickHTML(p, g)).join('') + (pend ? `<p class="muted small">${pend} more prop markets are waiting on game logs.</p>` : '')
-        : `<p class="muted">${!KALSHI.hasGame(g.kkey) ? (KALSHI.status().ok ? 'Kalshi has no open markets for this game yet.' : 'Connecting to Kalshi…') : pend ? 'Loading player game logs to price the props…' : 'No picks match this filter.'}</p>`;
+      const rec = INTEL.get(g.id);
+      let html = kalshiNote(g);
+      if (ps.length) html += ps.slice(0, 50).map((p) => pickHTML(p, g)).join('');
+      if (pend) html += `<p class="muted small">${pend} more prop markets are waiting on game logs.</p>`;
+      if (ms.length) html += `<h4 class="subh">Model picks — no live price on this line yet</h4><p class="muted small">Best lean per player and stat on Kalshi's standard lines, ranked. Enter only at or below the Buy-if price.</p>` + ms.slice(0, 30).map((p) => pickHTML(p, g)).join('');
+      if (!ps.length && !ms.length) html += `<p class="muted">${rec?.loading || !rec ? 'Loading game logs and injury reports to build picks…' : g.state === 'post' ? 'This game is final.' : 'No picks match this filter.'}</p>`;
+      $('#fList').innerHTML = html;
       renderFeed(g);
       $('#fBoard').innerHTML = boardHTML(g);
       $('#fIntel').innerHTML = intelHTML(g);
     }
     if (force || (now - lastChartRender > 4000 && !busy())) {
       lastChartRender = now;
-      const ps = ev ? filtered(ev.picks) : [];
-      CHART.render($('#fChart'), ps, { onPick: (id) => { const t = document.getElementById('pk-' + id.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } } });
+      const priced = ev ? filtered(ev.picks) : [];
+      const lean = !priced.length;
+      const ps = lean ? (ev ? filtered(ev.models || []) : []) : priced;
+      CHART.render($('#fChart'), ps, { lean, onPick: (id) => { const t = document.getElementById('pk-' + id.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } } });
     }
   }
 

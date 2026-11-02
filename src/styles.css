@@ -309,6 +309,14 @@ input[type="checkbox"] { accent-color: var(--aero); }
 .chipx.live { background: #c8261c; color: #fff; }
 .chipx.lag { background: var(--warn); color: #241900; }
 .chipx.new { background: var(--aero); color: #001427; }
+.chipx.model { background: #2a4a6b; color: #cfe6ff; }
+.chipx.book { background: #1f5f3a; color: #d6ffe4; }
+.knote { display: grid; gap: 8px; padding: 9px 11px; border-radius: 7px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); background: rgba(73, 176, 255, 0.08); border: 1px solid rgba(73, 176, 255, 0.35); }
+.knote.bad { background: rgba(255, 201, 74, 0.08); border-color: rgba(255, 201, 74, 0.45); }
+.knote.ok { background: rgba(82, 210, 115, 0.07); border-color: rgba(82, 210, 115, 0.35); }
+.knote b { color: var(--ink); }
+.knote a.gel { justify-self: start; text-decoration: none; color: #fff; }
+.knote small { color: var(--ink-3); font-size: 11px; overflow-wrap: anywhere; }
 .chipx.pass { background: #36404c; color: var(--ink-2); }
 details summary { cursor: pointer; font-size: 12.5px; color: var(--aero); list-style: none; }
 details summary::-webkit-details-marker { display: none; }
