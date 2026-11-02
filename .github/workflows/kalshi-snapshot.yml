@@ -1,0 +1,29 @@
+name: kalshi-snapshot
+# Publishes Kalshi NBA market prices to the `data` branch ~every minute so the
+# githack-hosted page can read them (Kalshi blocks direct browser requests).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/kalshi-snapshot.yml', 'tools/kalshi-snapshot.js']
+permissions:
+  contents: write
+concurrency:
+  group: kalshi-snapshot
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/kalshi-snapshot.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_MINUTES: '28'
+          EVERY_SECONDS: '55'
