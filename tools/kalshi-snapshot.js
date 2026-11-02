@@ -25,29 +25,46 @@ async function seriesList() {
   const found = (j?.series || []).map((s) => s.ticker).filter((t) => /^KXNBA/.test(t) && !NOT_GAME.test(t));
   return [...new Set([...FALLBACK, ...found])];
 }
-const keep = (m) => {
-  const o = { ticker: m.ticker, event_ticker: m.event_ticker, title: m.title, yes_sub_title: m.yes_sub_title, subtitle: m.subtitle || undefined, status: m.status,
-    yes_bid_dollars: m.yes_bid_dollars, yes_ask_dollars: m.yes_ask_dollars, no_bid_dollars: m.no_bid_dollars, no_ask_dollars: m.no_ask_dollars, last_price_dollars: m.last_price_dollars,
-    volume: m.volume ?? m.volume_fp, open_interest: m.open_interest ?? m.open_interest_fp, floor_strike: m.floor_strike, cap_strike: m.cap_strike, strike_type: m.strike_type, custom_strike: m.custom_strike };
-  // legacy integer-cent fields if the dollar strings are missing
-  if (o.yes_bid_dollars == null && m.yes_bid != null) { o.yes_bid = m.yes_bid; o.yes_ask = m.yes_ask; o.no_bid = m.no_bid; o.no_ask = m.no_ask; o.last_price = m.last_price; }
-  return o;
+// only per-game markets for (ET) yesterday..+4 days, in a compact array form:
+// [ticker, yes_sub_title, floor_strike, strike_type, yes_bid, yes_ask, last, volume, open_interest, extra]
+const GAME_SERIES = /^KXNBA(GAME|SPREAD|TOTAL|TEAMTOTAL|PTS|REB|AST|3PT|PRA|PR|PA|RA|STL|BLK|WINMARGIN|OT|(1Q|2Q|3Q|4Q|1H|2H)(WINNER|SPREAD|TOTAL|TEAMTOTAL)?)(PROT)?$/;
+const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function dateCodes() {
+  const out = new Set();
+  for (let d = -1; d <= 4; d++) {
+    const t = new Date(Date.now() + d * 864e5);
+    const et = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: '2-digit', month: 'numeric', day: '2-digit' }).formatToParts(t);
+    const o = {}; for (const x of et) o[x.type] = x.value;
+    out.add(o.year + MON[+o.month - 1] + o.day);
+  }
+  return out;
+}
+const px = (d, c) => (d != null ? +(+d).toFixed(4) : c != null ? +(c / 100).toFixed(4) : null);
+const keep = (m, codes) => {
+  const parts = String(m.ticker).split('-');
+  if (parts.length < 3 || !GAME_SERIES.test(parts[0]) || !codes.has(parts[1].slice(0, 7))) return null;
+  if (m.status && !/active|open/.test(m.status)) return null;
+  const cs = m.custom_strike || {};
+  const extra = {};
+  for (const [k, v] of Object.entries(cs)) if (!/basketball_/.test(k)) extra[k] = v;
+  return [m.ticker, m.yes_sub_title || m.title || '', m.floor_strike ?? null, m.strike_type || null, px(m.yes_bid_dollars, m.yes_bid), px(m.yes_ask_dollars, m.yes_ask),
+    px(m.last_price_dollars, m.last_price), Math.round(+(m.volume ?? m.volume_fp ?? 0)), Math.round(+(m.open_interest ?? m.open_interest_fp ?? 0)), Object.keys(extra).length ? extra : 0];
 };
 async function snapshot(series) {
-  const markets = []; let okSeries = 0;
-  for (const ser of series) {
+  const markets = []; let okSeries = 0; const codes = dateCodes();
+  for (const ser of series.filter((x) => GAME_SERIES.test(x))) {
     let cursor = '', pages = 0, any = false;
     do {
       const j = await get(`/markets?series_ticker=${ser}&status=open&limit=1000${cursor ? '&cursor=' + cursor : ''}`);
       if (!j) break;
       any = true;
-      for (const m of j.markets || []) markets.push(keep(m));
+      for (const m of j.markets || []) { const k = keep(m, codes); if (k) markets.push(k); }
       cursor = j.cursor || ''; pages++;
     } while (cursor && pages < 8);
     if (any) okSeries++;
     await sleep(120);
   }
-  return { at: Date.now(), okSeries, series, markets };
+  return { v: 2, at: Date.now(), okSeries, markets };
 }
 function sh(cmd) { return execSync(cmd, { cwd: DIR, stdio: ['ignore', 'pipe', 'pipe'] }).toString(); }
 (async () => {

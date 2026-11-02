@@ -10,6 +10,8 @@ const NET = (() => {
     espnweb: { label: 'ESPN', bases: ['/x/espnweb', 'https://site.web.api.espn.com'] },
     nba: { label: 'NBA', bases: ['/x/nba', 'https://cdn.nba.com'] },
     kalshi: { label: 'Kalshi', bases: ['/x/kalshi', '/x/kalshi2', 'https://external-api.kalshi.com', 'https://api.elections.kalshi.com'] },
+    ghapi: { label: 'GitHub', bases: ['https://api.github.com'], noRelay: true },
+    ghraw: { label: 'GitHub', bases: ['https://raw.githubusercontent.com'], noRelay: true },
   };
   // free public CORS relays (rate-limited; corsproxy.io now refuses non-localhost sites)
   const PUBLIC = ['https://api.codetabs.com/v1/proxy/?quest={url}', 'https://api.allorigins.win/raw?url={url}', 'https://thingproxy.freeboard.io/fetch/{rawurl}'];
@@ -31,7 +33,7 @@ const NET = (() => {
     if (customProxy) out.push(...abs.map((b) => ({ base: b, kind: 'custom' })));
     if (relOk) out.push(...rel.map((b) => ({ base: b, kind: 'proxy' })));
     // last resort when hosted somewhere without rewrites: free public CORS relays
-    for (const tpl of PUBLIC) out.push({ base: abs[0], kind: 'public', tpl });
+    if (!SOURCES[src].noRelay) for (const tpl of PUBLIC) out.push({ base: abs[0], kind: 'public', tpl });
     return out;
   }
   function buildUrl(c, path) {

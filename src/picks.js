@@ -25,7 +25,10 @@ const PICKS = (() => {
     const seg = m.seg ? ' · ' + SEGN[m.seg] : '';
     const th = m.th;
     switch (m.kind) {
-      case 'ml': return sideYes ? { t: `${teamName(g, m.side)} win${seg}`, s: m.seg ? 'Segment winner' : 'Moneyline' } : (m.seg ? { t: `${teamName(g, m.side)} don't win${seg}`, s: 'Other team or tie' } : { t: `${teamName(g, other(m.side))} win`, s: `Moneyline · NO on ${g[m.side].abbr}` });
+      case 'margin': { const r = m.range ? (m.range[1] === Infinity ? `${m.range[0]}+` : `${m.range[0]}–${m.range[1]}`) : ''; return sideYes ? { t: `${teamName(g, m.side)} win by ${r}`, s: 'Winning margin' } : { t: `Not ${teamName(g, m.side)} by ${r}`, s: 'Winning margin · NO' }; }
+      case 'ot': return sideYes ? { t: 'Game goes to overtime', s: 'Overtime' } : { t: 'No overtime', s: 'Overtime · NO' };
+      case 'ml': if (m.side === 'tie') return sideYes ? { t: `${SEGN[m.seg] || ''} ends tied`, s: 'Segment tie' } : { t: `${SEGN[m.seg] || ''} not tied`, s: 'Segment tie · NO' };
+        return sideYes ? { t: `${teamName(g, m.side)} win${seg}`, s: m.seg ? 'Segment winner' : 'Moneyline' } : (m.seg ? { t: `${teamName(g, m.side)} don't win${seg}`, s: 'Other team or tie' } : { t: `${teamName(g, other(m.side))} win`, s: `Moneyline · NO on ${g[m.side].abbr}` });
       case 'spread': {
         const L = th.line;
         return sideYes ? { t: `${teamName(g, m.side)} −${L}${seg}`, s: `Wins by ${th.k}+` } : { t: `${teamName(g, other(m.side))} +${L}${seg}`, s: `${g[m.side].abbr} wins by ${th.k - 1} or fewer / loses` };
@@ -34,6 +37,7 @@ const PICKS = (() => {
       case 'teamtotal': return sideYes ? { t: `${teamName(g, m.side)} over ${th.line}`, s: 'Team total' } : { t: `${teamName(g, m.side)} under ${th.line}`, s: 'Team total' };
       case 'prop': {
         const st = MODEL.SHORT[m.stat] || m.stat;
+        if (m.prot) { const L = labels({ ...m, prot: false }, g, sideYes); return { t: L.t, s: L.s + ' · PROT market' }; }
         if (m.stat === 'dd' || m.stat === 'td') return sideYes ? { t: `${m.player} ${st}`, s: MODEL.LABEL[m.stat] } : { t: `${m.player} no ${st}`, s: MODEL.LABEL[m.stat] };
         if (th?.op === '<') return sideYes ? { t: `${m.player} under ${th.line} ${st}`, s: 'Player prop' } : { t: `${m.player} ${th.kmax + 1}+ ${st}`, s: 'Player prop' };
         return sideYes ? { t: `${m.player} ${th.k}+ ${st}`, s: `Player prop · ${MODEL.LABEL[m.stat]}` } : { t: `${m.player} under ${th.k - 0.5} ${st}`, s: `Player prop · ≤${th.k - 1} ${MODEL.LABEL[m.stat]}` };
@@ -148,7 +152,7 @@ const PICKS = (() => {
         const nEff = p.proj.nEff;
         unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (/question|doubt|day/i.test(p.status) ? 0.05 : 0);
         data = { player: p, live: lb, fp };
-      } else if (['ml', 'spread', 'total', 'teamtotal'].includes(m.kind)) {
+      } else if (['ml', 'spread', 'total', 'teamtotal', 'margin', 'ot'].includes(m.kind)) {
         fp = MODEL.lineProb(m, g, ctx);
         if (!fp) continue;
         unc = (ls.pre ? 0.02 : 0.025) + (m.seg ? 0.01 : 0);
@@ -165,7 +169,9 @@ const PICKS = (() => {
       let evAt = g.lastScoreAt || 0;
       if (m.kind === 'prop') evAt = Math.max(0, ...(MODEL.COMBO[m.stat] || [m.stat]).map((k) => STATE.statAt.get(`${data.player.espnId}:${k}`) || 0));
       const sinceScore = evAt ? (now - evAt) / 1000 : Infinity;
-      const quoteStale = !m.book && !!evAt && m.quoteAt < evAt && sinceScore < 120;
+      const delayed = m.snapAt ? (now - m.snapAt) / 60000 : 0; // minutes behind (published snapshot)
+      if (delayed) unc += ls.pre ? 0.005 : Math.min(0.04, 0.012 * delayed);
+      const quoteStale = !m.book && !m.snapAt && !!evAt && m.quoteAt < evAt && sinceScore < 120;
       const stale = quoteStale && sinceScore > 1.5 && Math.abs(move) >= 0.025;
       const lag = stale ? { sec: Math.round((now - m.quoteAt) / 1000), sinceScore: Math.round(sinceScore), move } : null;
       // ---- market prior for props: blend the model with the live mid so information the model
@@ -211,7 +217,7 @@ const PICKS = (() => {
           label: lb.t, sub: lb.s, price, fair, cost, edge, roi, be, maxEntry, greatEntry, kelly, unc, safety, rating, tier,
           playable: edge >= Math.max(PLAY_MIN, safety) && price <= maxEntry + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
-          live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
+          live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
         });
       }
     }
@@ -312,7 +318,8 @@ const PICKS = (() => {
     } else if (p.book) {
       out.push({ k: 'mkt', t: `${m.sub}. Price ${fmtAm(p.am)} = ${U.cents(p.price)} implied (vig included). Kalshi had no open market for this line.` });
     } else {
-      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · requoted ${U.ago(m.quoteAt)}` });
+      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · ${m.snapAt ? 'price as of ' + U.ago(m.snapAt) : 'requoted ' + U.ago(m.quoteAt)}` });
+      if (m.snapAt) out.push({ k: 'risk', t: `Delayed Kalshi feed (${U.ago(m.snapAt)}). Confirm the live price on Kalshi is still at or below ${U.cents(p.maxEntry)} before entering.` });
     }
     return out;
   }

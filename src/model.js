@@ -123,7 +123,7 @@ const MODEL = (() => {
     let hm = 0, am = 0;
     const p0 = a / 12, p1 = b / 12; // periods [p0, p1)
     for (let p = p0; p < p1; p++) { hm += g.home.line[p] || 0; am += g.away.line[p] || 0; }
-    return { remSeg, len, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
+    return { remSeg, len, hm, am, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
   }
 
   // ---------- fair probability for a game-line market ----------
@@ -139,7 +139,13 @@ const MODEL = (() => {
         if (!m.side) return null;
         const pH = sd < 0.05 ? (ss.segMargin > 0 ? 1 : 0) : 1 - U.normCdf((0.5 - mu) / sd);
         const pA = sd < 0.05 ? (ss.segMargin < 0 ? 1 : 0) : U.normCdf((-0.5 - mu) / sd);
+        if (m.side === 'tie') return { p: U.clamp(1 - pH - pA, 0, 1), mu, sd };
         return { p: m.side === 'home' ? pH : pA, mu, sd };
+      }
+      if (m.kind === 'teamtotal' && th && m.side) {
+        const so = m.side === 'home' ? ss.hm : ss.am;
+        const tmu = so + (tEff / 48 * ss.remSeg) / 2 + sideSign * sEff * (ss.remSeg / 48) / 2, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
       }
       if (m.kind === 'spread' && th && m.side) return { p: atLeast(th.k, sideSign * mu, sd), mu: sideSign * mu, sd };
       if (m.kind === 'total' && th) {
@@ -149,8 +155,25 @@ const MODEL = (() => {
       }
       return null;
     }
+    if (m.kind === 'margin' && m.range && m.side) {
+      const d = marginDist(ls, sEff), mu = sideSign * d.mu, [lo, hi] = m.range;
+      if (ls.post) { const v = sideSign * ls.margin; return { p: v >= lo && v <= hi ? 1 : 0, mu, sd: 0 }; }
+      const p = U.normCdf((Math.min(hi, 99) + 0.5 - mu) / d.sd) - U.normCdf((lo - 0.5 - mu) / d.sd);
+      return { p: U.clamp(p, 0, 1), mu, sd: d.sd };
+    }
+    if (m.kind === 'ot') {
+      if (ls.period > 4) return { p: 1, mu: 0, sd: 0 };
+      if (ls.post) return { p: 0, mu: 0, sd: 0 };
+      const remReg = ls.pre ? 48 : Math.max(0, U.minutesRemaining(Math.min(ls.period, 4), ls.clockSec));
+      const t = remReg / 48, mu = ls.margin + sEff * t, sg = sigAt(Math.max(t, 1e-6));
+      const sd = Math.sqrt(sg * sg * Math.max(t, 1e-6) + lateVar(remReg));
+      if (sd < 0.05) return { p: ls.margin === 0 ? 1 : 0, mu, sd: 0 };
+      // normal tie mass under-counts real NBA ties (~6% of games go to OT); inflate until the last 12 minutes
+      const infl = 1 + 0.8 * Math.min(1, remReg / 12);
+      return { p: U.clamp((U.normCdf((0.5 - mu) / sd) - U.normCdf((-0.5 - mu) / sd)) * infl, 0, 1), mu, sd };
+    }
     if (m.kind === 'ml') {
-      if (!m.side) return null;
+      if (!m.side || m.side === 'tie') return null;
       const ph = pHomeWin(ls, sEff);
       return { p: m.side === 'home' ? ph : 1 - ph, ...marginDist(ls, sEff) };
     }

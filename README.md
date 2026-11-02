@@ -15,6 +15,11 @@ URL on your phone and use Share → Add to Home Screen for a full-screen app.
 
 **Netlify:** app.netlify.com → Add new site → Import from Git → pick the repo → Deploy.
 
+**Hosted without a proxy (githack, GitHub Pages…):** Kalshi blocks direct browser requests, so a
+GitHub Actions job (`.github/workflows/kalshi-snapshot.yml`) fetches every open NBA game market about
+once a minute and force-pushes a compact `kalshi.json` to the `data` branch. The app reads it from
+raw.githubusercontent.com (CORS-enabled) and labels those prices as delayed.
+
 **Anywhere else (GitHub Pages, S3…):** deploy `proxy/worker.js` as a Cloudflare Worker, then paste
 `https://<worker>.workers.dev/?url=` into the app's Settings.
 

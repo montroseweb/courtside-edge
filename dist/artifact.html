@@ -313,6 +313,7 @@ input[type="checkbox"] { accent-color: var(--aero); }
 .chipx.live { background: #c8261c; color: #fff; }
 .chipx.lag { background: var(--warn); color: #241900; }
 .chipx.new { background: var(--aero); color: #001427; }
+.chipx.delayed { background: #6b5a1f; color: #fff3cf; }
 .chipx.model { background: #2a4a6b; color: #cfe6ff; }
 .chipx.book { background: #1f5f3a; color: #d6ffe4; }
 .knote { display: grid; gap: 8px; padding: 9px 11px; border-radius: 7px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); background: rgba(73, 176, 255, 0.08); border: 1px solid rgba(73, 176, 255, 0.35); }
@@ -728,6 +729,8 @@ const NET = (() => {
     espnweb: { label: 'ESPN', bases: ['/x/espnweb', 'https://site.web.api.espn.com'] },
     nba: { label: 'NBA', bases: ['/x/nba', 'https://cdn.nba.com'] },
     kalshi: { label: 'Kalshi', bases: ['/x/kalshi', '/x/kalshi2', 'https://external-api.kalshi.com', 'https://api.elections.kalshi.com'] },
+    ghapi: { label: 'GitHub', bases: ['https://api.github.com'], noRelay: true },
+    ghraw: { label: 'GitHub', bases: ['https://raw.githubusercontent.com'], noRelay: true },
   };
   // free public CORS relays (rate-limited; corsproxy.io now refuses non-localhost sites)
   const PUBLIC = ['https://api.codetabs.com/v1/proxy/?quest={url}', 'https://api.allorigins.win/raw?url={url}', 'https://thingproxy.freeboard.io/fetch/{rawurl}'];
@@ -749,7 +752,7 @@ const NET = (() => {
     if (customProxy) out.push(...abs.map((b) => ({ base: b, kind: 'custom' })));
     if (relOk) out.push(...rel.map((b) => ({ base: b, kind: 'proxy' })));
     // last resort when hosted somewhere without rewrites: free public CORS relays
-    for (const tpl of PUBLIC) out.push({ base: abs[0], kind: 'public', tpl });
+    if (!SOURCES[src].noRelay) for (const tpl of PUBLIC) out.push({ base: abs[0], kind: 'public', tpl });
     return out;
   }
   function buildUrl(c, path) {
@@ -1207,6 +1210,10 @@ const NBA = (() => {
 const KALSHI = (() => {
   const V = '/trade-api/v2';
   const FALLBACK_SERIES = ['KXNBAGAME', 'KXNBASPREAD', 'KXNBATOTAL', 'KXNBAPTS', 'KXNBAREB', 'KXNBAAST', 'KXNBA3PT', 'KXNBAPRA', 'KXNBASTL', 'KXNBABLK', 'KXNBA1HWINNER', 'KXNBA1QWINNER', 'KXNBA2HWINNER', 'KXNBA1HSPREAD', 'KXNBA1HTOTAL'];
+  const SNAP_REPO = 'montroseweb/courtside-edge'; // GitHub Actions publishes Kalshi prices here (data branch)
+  // a "player" name that is really a team (e.g. "Los Angeles L" in race-to-N markets)
+  const TEAM_WORDS = new RegExp('^(' + TEAMS.list.flatMap((t) => [t.city, t.name, t.city + ' ' + t.name]).concat(['Los Angeles L', 'Los Angeles C', 'LA Clippers', 'LA Lakers']).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')$', 'i');
+  const SEGWIN = /^KXNBA(1Q|2Q|3Q|4Q|1H|2H)(WINNER)?(PROT)?$/;
   const NOT_GAME = /^KXNBA(MVP|ROY|DPOY|6MOY|MIP|COY|WINS|EAST|WEST|DIV|SERIES|DRAFT|FINALS|CHAMP|PLAYOFF|SEED|ALLSTAR|TRADE|COACH)|^KXNBA$/;
 
   const S = {
@@ -1327,23 +1334,36 @@ const KALSHI = (() => {
       if (s.includes(':')) s = s.split(':')[0];
       s = s.replace(/^will\s+/i, '').replace(/\s*\d+(\.\d+)?\s*\+.*$/, '')
         .replace(/\b(record|score|scores|have|get|over|under|at least|or more|points?|rebounds?|assists?|threes?|3-pointers?|made|steals?|blocks?|double[- ]double|triple[- ]double)\b.*$/i, '').trim();
-      if (/^[A-Za-zÀ-ÿ.'\-]+(\s+[A-Za-zÀ-ÿ.'\-]+){1,3}$/.test(s)) return s;
+      if (/^[\p{L}.'’\-]+(\s+[\p{L}.'’\-]+){1,4}$/u.test(s) && !TEAM_WORDS.test(s)) return s;
     }
     return null;
   }
 
-  function normalize(m, evInfo) {
+  function parseRange(t) {
+    t = String(t || '');
+    let mm = t.match(/(\d+)\s*(?:to|-|–)\s*(\d+)/i); if (mm) return [+mm[1], +mm[2]];
+    mm = t.match(/(\d+)\s*(?:\+|or more)/i); if (mm) return [+mm[1], Infinity];
+    mm = t.match(/(?:over|more than)\s*(\d+)/i); if (mm) return [+mm[1] + 1, Infinity];
+    return null;
+  }
+  function normalize(m, evInfo, snapAt) {
     const g = S.games.get(evInfo.key);
     const series = evInfo.series;
     const text = [m.title, m.yes_sub_title, m.subtitle].filter(Boolean).join(' · ');
     const seg = segOf(series, [m.title, m.yes_sub_title].join(' '));
     let kind = 'other', side = null, stat = null, player = null;
     const th = threshold(m, text);
+    const suffix = String(m.ticker).split('-').pop() || '';
+    let range = null;
     if (/TEAMTOTAL|TEAMPTS/.test(series)) { kind = 'teamtotal'; side = teamSide(m, g, text); }
+    else if (/WINMARGIN/.test(series)) { kind = 'margin'; side = teamSide(m, g, text); range = parseRange((m.custom_strike && (m.custom_strike['Winning Margin'] || m.custom_strike.margin)) || '') || parseRange(m.yes_sub_title || '') || parseRange(m.title || '') || parseRange(m.ticker.split('-').pop().replace(/^[A-Z]+/, '').replace('PLUS', '+').replace('TO', ' to ')); }
+    else if (/^KXNBA(OT|OVERTIME)$/.test(series)) { kind = 'ot'; }
+    else if (/RACE|LEADER|FIRST|H2H|ESCALATOR|LADDER/.test(series.replace(/^KXNBA/, ''))) { kind = 'other'; }
+    else if (SEGWIN.test(series)) { kind = 'ml'; side = /^TIE$/i.test(suffix) || /^tie$/i.test(m.yes_sub_title || '') ? 'tie' : teamSide(m, g, text); }
     else if (/SPREAD/.test(series) || /wins by (over|more than)/i.test(text)) { kind = 'spread'; side = teamSide(m, g, text); }
     else if (/TOTAL/.test(series) || (/total points|points scored/i.test(text) && !/:\s*\d/.test(m.yes_sub_title || ''))) { kind = 'total'; }
     else if (/GAME$|WINNER/.test(series) || /winner/i.test(m.title || '')) { kind = 'ml'; side = teamSide(m, g, text); }
-    else { stat = statOf(series, text); if (stat) { kind = 'prop'; player = playerName(m); } }
+    else { stat = statOf(series, text); if (stat) { player = playerName(m); kind = player ? 'prop' : 'other'; } }
     const prev = S.markets.get(m.ticker);
     const yesBid = dollars(m.yes_bid_dollars, m.yes_bid), yesAsk = dollars(m.yes_ask_dollars, m.yes_ask);
     let noBid = dollars(m.no_bid_dollars, m.no_bid), noAsk = dollars(m.no_ask_dollars, m.no_ask);
@@ -1351,7 +1371,7 @@ const KALSHI = (() => {
     if (noBid == null && yesAsk != null) noBid = 1 - yesAsk;
     const now = Date.now();
     const out = {
-      ticker: m.ticker, event: m.event_ticker || evInfo.ticker, series, gameKey: evInfo.key, kind, seg, side, stat, player, th,
+      ticker: m.ticker, event: m.event_ticker || evInfo.ticker, series, gameKey: evInfo.key, kind, seg, side, stat, player, th, range, prot: /PROT$/.test(series),
       title: m.title || '', sub: m.yes_sub_title || '', rules: m.rules_primary || '',
       yesBid, yesAsk, noBid, noAsk, last: dollars(m.last_price_dollars, m.last_price), prevPrice: dollars(m.previous_price_dollars, m.previous_price),
       vol: U.num(m.volume) ?? U.num(m.volume_fp) ?? 0, oi: U.num(m.open_interest) ?? U.num(m.open_interest_fp) ?? 0,
@@ -1359,16 +1379,17 @@ const KALSHI = (() => {
       seenAt: now, quoteAt: prev?.quoteAt || now, hist: prev?.hist || [],
       espnId: prev?.espnId,
     };
+    if (snapAt) out.snapAt = snapAt;
     const changed = !prev || prev.yesBid !== yesBid || prev.yesAsk !== yesAsk;
     if (changed) {
-      out.quoteAt = now;
-      out.hist.push({ t: now, bid: yesBid, ask: yesAsk });
+      out.quoteAt = snapAt || now;
+      out.hist.push({ t: snapAt || now, bid: yesBid, ask: yesAsk });
       if (out.hist.length > 240) out.hist.splice(0, out.hist.length - 240);
     }
     return out;
   }
 
-  function ingest(list, fallbackEvent) {
+  function ingest(list, fallbackEvent, snapAt) {
     const touched = new Set();
     for (const m of list || []) {
       if (!m?.ticker) continue;
@@ -1384,7 +1405,7 @@ const KALSHI = (() => {
       S.diag.matched.add(info.key);
       const st = String(m.status || '').toLowerCase();
       if (st && !/active|open|initialized/.test(st)) { S.markets.delete(m.ticker); S.byGame.get(info.key)?.delete(m.ticker); continue; }
-      const nm = normalize(m, info);
+      const nm = normalize(m, info, snapAt);
       S.markets.set(m.ticker, nm);
       if (!S.byGame.has(info.key)) S.byGame.set(info.key, new Map());
       S.byGame.get(info.key).set(m.ticker, nm);
@@ -1397,8 +1418,11 @@ const KALSHI = (() => {
   async function discover() {
     const cached = !NET.isDemo() && U.store.get('kseries');
     S.series = cached && Date.now() - cached.t < 6 * 3600e3 && cached.list?.length ? cached.list : FALLBACK_SERIES.slice();
+    // fetch the published snapshot at the same time, so prices show even if Kalshi blocks the browser
+    const snapP = NET.isDemo() ? Promise.resolve() : loadSnapshot().catch(() => { });
     await scanEvents();            // core series first so prices appear fast
     S.discovered = Date.now();
+    await snapP;
     if (!cached && !NET.viaRelay('kalshi')) {
       // the full Sports series list is large; skip it on slow public relays
       NET.get('kalshi', `${V}/series?category=Sports`, { priority: 2, timeout: 15000 }).then((j) => {
@@ -1416,7 +1440,13 @@ const KALSHI = (() => {
   async function scanEvents(only) {
     S.lastEventScan = Date.now();
     let errs = 0;
-    const list = only || S.series;
+    let list = only || S.series;
+    if (!only && !NET.isDemo()) {
+      // probe with one series first; if Kalshi is unreachable from this browser, don't fire the rest
+      const first = list.includes('KXNBAGAME') ? 'KXNBAGAME' : list[0];
+      try { await NET.get('kalshi', `${V}/events?series_ticker=${first}&status=open&limit=1`, { priority: 5, timeout: 7000 }); S.reached = Date.now(); }
+      catch (e) { if (e.code !== 404) { S.err = e.message; S.diag.lastScanErrors = 1; return; } }
+    }
     const jobs = list.map(async (ser) => {
       try {
         let cursor = '', pages = 0, hit = false;
@@ -1441,10 +1471,35 @@ const KALSHI = (() => {
     S.diag.lastScanErrors = errs;
   }
 
+  const decode = (a) => {
+    if (!Array.isArray(a)) return a; // v1 snapshots stored raw market objects
+    const [ticker, sub, fs, st, yb, ya, last, vol, oi, extra] = a, parts = ticker.split('-');
+    return { ticker, event_ticker: parts[0] + '-' + parts[1], yes_sub_title: sub, title: sub, floor_strike: fs, strike_type: st, yes_bid_dollars: yb, yes_ask_dollars: ya, last_price_dollars: last, volume: vol, open_interest: oi, custom_strike: extra || null, status: 'active' };
+  };
+  async function loadSnapshot() {
+    let sha = null;
+    // GitHub's unauthenticated API allows 60 requests/hour per IP: check for a new snapshot at most every 75s
+    if (S.snapSha && Date.now() - (S.ghapiAt || 0) < 75000) return;
+    S.ghapiAt = Date.now();
+    try { const b = await NET.get('ghapi', `/repos/${SNAP_REPO}/branches/data`, { fresh: true, timeout: 8000 }); sha = b?.commit?.sha || null; } catch { }
+    if (sha && sha === S.snapSha && Date.now() - S.snapLoaded < 5 * 60e3) return;
+    const path = sha ? `/${SNAP_REPO}/${sha}/kalshi.json` : `/${SNAP_REPO}/refs/heads/data/kalshi.json?m=${Math.floor(Date.now() / 60000)}`;
+    const j = await NET.get('ghraw', path, { fresh: !sha, timeout: 20000 });
+    if (!j?.markets?.length || !j.at) return;
+    if (S.snapAt && j.at <= S.snapAt) return;
+    S.snapSha = sha; S.snapAt = j.at; S.snapLoaded = Date.now();
+    const live = S.reached && Date.now() - S.reached < 120e3;
+    if (live) return; // direct prices are flowing; keep them
+    ingest(j.markets.map(decode), null, j.at);
+    for (const [t, m] of S.markets) if (m.snapAt && m.snapAt < j.at) { S.markets.delete(t); S.byGame.get(m.gameKey)?.delete(t); }
+    S.gameSeries.size; // (series polling is irrelevant in snapshot mode)
+  }
+
   async function pollSeries(ser, pri) {
     let cursor = '', pages = 0;
     do {
       const j = await NET.get('kalshi', `${V}/markets?series_ticker=${ser}&status=open&limit=1000${cursor ? '&cursor=' + cursor : ''}`, { priority: pri, fresh: true });
+      S.reached = Date.now();
       ingest(j?.markets);
       cursor = j?.cursor || ''; pages++;
     } while (cursor && pages < 5);
@@ -1478,7 +1533,9 @@ const KALSHI = (() => {
     const run = (id, every, fn) => { const done = due(id, every); if (done) fn().catch((e) => { S.err = e.message; }).finally(done); };
     const relay = NET.viaRelay('kalshi');
     // nothing found yet (blocked / slow relay / no games): keep retrying discovery every 30s
-    run('scan', S.gameSeries.size ? 5 * 60e3 : 30e3, () => scanEvents());
+    const live = S.reached && Date.now() - S.reached < 120e3;
+    run('scan', S.gameSeries.size ? 5 * 60e3 : live ? 30e3 : 3 * 60e3, () => scanEvents());
+    if (!live && !NET.isDemo()) run('snap', 20000, loadSnapshot);
     const seriesList = [...S.gameSeries];
     for (const ser of seriesList) {
       const isLine = LINE_RE.test(ser);
@@ -1498,8 +1555,8 @@ const KALSHI = (() => {
     marketsFor: (key) => [...(S.byGame.get(key)?.values() || [])],
     hasGame: (key) => (S.byGame.get(key)?.size || 0) > 0,
     onUpdate: (f) => { listeners.add(f); return () => listeners.delete(f); },
-    status: () => ({ ok: S.ok, err: S.err, updated: S.updated, reached: S.reached, discovered: S.discovered, series: [...S.gameSeries], markets: S.markets.size, events: S.diag.events, matched: S.diag.matched.size, unmatched: [...S.diag.unmatched].slice(0, 6), scanErrors: S.diag.lastScanErrors }),
-    gameKey, parseEventTicker, _S: S,
+    status: () => ({ snapAt: S.snapAt || 0, snapMode: !!S.snapAt && !(S.reached && Date.now() - S.reached < 120e3), ok: S.ok, err: S.err, updated: S.updated, reached: S.reached, discovered: S.discovered, series: [...S.gameSeries], markets: S.markets.size, events: S.diag.events, matched: S.diag.matched.size, unmatched: [...S.diag.unmatched].slice(0, 6), scanErrors: S.diag.lastScanErrors }),
+    gameKey, parseEventTicker, _S: S, _ingest: (l, e, a) => ingest(l, e, a),
   };
 })();
 
@@ -1629,7 +1686,7 @@ const MODEL = (() => {
     let hm = 0, am = 0;
     const p0 = a / 12, p1 = b / 12; // periods [p0, p1)
     for (let p = p0; p < p1; p++) { hm += g.home.line[p] || 0; am += g.away.line[p] || 0; }
-    return { remSeg, len, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
+    return { remSeg, len, hm, am, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
   }
 
   // ---------- fair probability for a game-line market ----------
@@ -1645,7 +1702,13 @@ const MODEL = (() => {
         if (!m.side) return null;
         const pH = sd < 0.05 ? (ss.segMargin > 0 ? 1 : 0) : 1 - U.normCdf((0.5 - mu) / sd);
         const pA = sd < 0.05 ? (ss.segMargin < 0 ? 1 : 0) : U.normCdf((-0.5 - mu) / sd);
+        if (m.side === 'tie') return { p: U.clamp(1 - pH - pA, 0, 1), mu, sd };
         return { p: m.side === 'home' ? pH : pA, mu, sd };
+      }
+      if (m.kind === 'teamtotal' && th && m.side) {
+        const so = m.side === 'home' ? ss.hm : ss.am;
+        const tmu = so + (tEff / 48 * ss.remSeg) / 2 + sideSign * sEff * (ss.remSeg / 48) / 2, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
       }
       if (m.kind === 'spread' && th && m.side) return { p: atLeast(th.k, sideSign * mu, sd), mu: sideSign * mu, sd };
       if (m.kind === 'total' && th) {
@@ -1655,8 +1718,25 @@ const MODEL = (() => {
       }
       return null;
     }
+    if (m.kind === 'margin' && m.range && m.side) {
+      const d = marginDist(ls, sEff), mu = sideSign * d.mu, [lo, hi] = m.range;
+      if (ls.post) { const v = sideSign * ls.margin; return { p: v >= lo && v <= hi ? 1 : 0, mu, sd: 0 }; }
+      const p = U.normCdf((Math.min(hi, 99) + 0.5 - mu) / d.sd) - U.normCdf((lo - 0.5 - mu) / d.sd);
+      return { p: U.clamp(p, 0, 1), mu, sd: d.sd };
+    }
+    if (m.kind === 'ot') {
+      if (ls.period > 4) return { p: 1, mu: 0, sd: 0 };
+      if (ls.post) return { p: 0, mu: 0, sd: 0 };
+      const remReg = ls.pre ? 48 : Math.max(0, U.minutesRemaining(Math.min(ls.period, 4), ls.clockSec));
+      const t = remReg / 48, mu = ls.margin + sEff * t, sg = sigAt(Math.max(t, 1e-6));
+      const sd = Math.sqrt(sg * sg * Math.max(t, 1e-6) + lateVar(remReg));
+      if (sd < 0.05) return { p: ls.margin === 0 ? 1 : 0, mu, sd: 0 };
+      // normal tie mass under-counts real NBA ties (~6% of games go to OT); inflate until the last 12 minutes
+      const infl = 1 + 0.8 * Math.min(1, remReg / 12);
+      return { p: U.clamp((U.normCdf((0.5 - mu) / sd) - U.normCdf((-0.5 - mu) / sd)) * infl, 0, 1), mu, sd };
+    }
     if (m.kind === 'ml') {
-      if (!m.side) return null;
+      if (!m.side || m.side === 'tie') return null;
       const ph = pHomeWin(ls, sEff);
       return { p: m.side === 'home' ? ph : 1 - ph, ...marginDist(ls, sEff) };
     }
@@ -2095,7 +2175,10 @@ const PICKS = (() => {
     const seg = m.seg ? ' · ' + SEGN[m.seg] : '';
     const th = m.th;
     switch (m.kind) {
-      case 'ml': return sideYes ? { t: `${teamName(g, m.side)} win${seg}`, s: m.seg ? 'Segment winner' : 'Moneyline' } : (m.seg ? { t: `${teamName(g, m.side)} don't win${seg}`, s: 'Other team or tie' } : { t: `${teamName(g, other(m.side))} win`, s: `Moneyline · NO on ${g[m.side].abbr}` });
+      case 'margin': { const r = m.range ? (m.range[1] === Infinity ? `${m.range[0]}+` : `${m.range[0]}–${m.range[1]}`) : ''; return sideYes ? { t: `${teamName(g, m.side)} win by ${r}`, s: 'Winning margin' } : { t: `Not ${teamName(g, m.side)} by ${r}`, s: 'Winning margin · NO' }; }
+      case 'ot': return sideYes ? { t: 'Game goes to overtime', s: 'Overtime' } : { t: 'No overtime', s: 'Overtime · NO' };
+      case 'ml': if (m.side === 'tie') return sideYes ? { t: `${SEGN[m.seg] || ''} ends tied`, s: 'Segment tie' } : { t: `${SEGN[m.seg] || ''} not tied`, s: 'Segment tie · NO' };
+        return sideYes ? { t: `${teamName(g, m.side)} win${seg}`, s: m.seg ? 'Segment winner' : 'Moneyline' } : (m.seg ? { t: `${teamName(g, m.side)} don't win${seg}`, s: 'Other team or tie' } : { t: `${teamName(g, other(m.side))} win`, s: `Moneyline · NO on ${g[m.side].abbr}` });
       case 'spread': {
         const L = th.line;
         return sideYes ? { t: `${teamName(g, m.side)} −${L}${seg}`, s: `Wins by ${th.k}+` } : { t: `${teamName(g, other(m.side))} +${L}${seg}`, s: `${g[m.side].abbr} wins by ${th.k - 1} or fewer / loses` };
@@ -2104,6 +2187,7 @@ const PICKS = (() => {
       case 'teamtotal': return sideYes ? { t: `${teamName(g, m.side)} over ${th.line}`, s: 'Team total' } : { t: `${teamName(g, m.side)} under ${th.line}`, s: 'Team total' };
       case 'prop': {
         const st = MODEL.SHORT[m.stat] || m.stat;
+        if (m.prot) { const L = labels({ ...m, prot: false }, g, sideYes); return { t: L.t, s: L.s + ' · PROT market' }; }
         if (m.stat === 'dd' || m.stat === 'td') return sideYes ? { t: `${m.player} ${st}`, s: MODEL.LABEL[m.stat] } : { t: `${m.player} no ${st}`, s: MODEL.LABEL[m.stat] };
         if (th?.op === '<') return sideYes ? { t: `${m.player} under ${th.line} ${st}`, s: 'Player prop' } : { t: `${m.player} ${th.kmax + 1}+ ${st}`, s: 'Player prop' };
         return sideYes ? { t: `${m.player} ${th.k}+ ${st}`, s: `Player prop · ${MODEL.LABEL[m.stat]}` } : { t: `${m.player} under ${th.k - 0.5} ${st}`, s: `Player prop · ≤${th.k - 1} ${MODEL.LABEL[m.stat]}` };
@@ -2218,7 +2302,7 @@ const PICKS = (() => {
         const nEff = p.proj.nEff;
         unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (/question|doubt|day/i.test(p.status) ? 0.05 : 0);
         data = { player: p, live: lb, fp };
-      } else if (['ml', 'spread', 'total', 'teamtotal'].includes(m.kind)) {
+      } else if (['ml', 'spread', 'total', 'teamtotal', 'margin', 'ot'].includes(m.kind)) {
         fp = MODEL.lineProb(m, g, ctx);
         if (!fp) continue;
         unc = (ls.pre ? 0.02 : 0.025) + (m.seg ? 0.01 : 0);
@@ -2235,7 +2319,9 @@ const PICKS = (() => {
       let evAt = g.lastScoreAt || 0;
       if (m.kind === 'prop') evAt = Math.max(0, ...(MODEL.COMBO[m.stat] || [m.stat]).map((k) => STATE.statAt.get(`${data.player.espnId}:${k}`) || 0));
       const sinceScore = evAt ? (now - evAt) / 1000 : Infinity;
-      const quoteStale = !m.book && !!evAt && m.quoteAt < evAt && sinceScore < 120;
+      const delayed = m.snapAt ? (now - m.snapAt) / 60000 : 0; // minutes behind (published snapshot)
+      if (delayed) unc += ls.pre ? 0.005 : Math.min(0.04, 0.012 * delayed);
+      const quoteStale = !m.book && !m.snapAt && !!evAt && m.quoteAt < evAt && sinceScore < 120;
       const stale = quoteStale && sinceScore > 1.5 && Math.abs(move) >= 0.025;
       const lag = stale ? { sec: Math.round((now - m.quoteAt) / 1000), sinceScore: Math.round(sinceScore), move } : null;
       // ---- market prior for props: blend the model with the live mid so information the model
@@ -2281,7 +2367,7 @@ const PICKS = (() => {
           label: lb.t, sub: lb.s, price, fair, cost, edge, roi, be, maxEntry, greatEntry, kelly, unc, safety, rating, tier,
           playable: edge >= Math.max(PLAY_MIN, safety) && price <= maxEntry + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
-          live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
+          live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
         });
       }
     }
@@ -2382,7 +2468,8 @@ const PICKS = (() => {
     } else if (p.book) {
       out.push({ k: 'mkt', t: `${m.sub}. Price ${fmtAm(p.am)} = ${U.cents(p.price)} implied (vig included). Kalshi had no open market for this line.` });
     } else {
-      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · requoted ${U.ago(m.quoteAt)}` });
+      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · ${m.snapAt ? 'price as of ' + U.ago(m.snapAt) : 'requoted ' + U.ago(m.quoteAt)}` });
+      if (m.snapAt) out.push({ k: 'risk', t: `Delayed Kalshi feed (${U.ago(m.snapAt)}). Confirm the live price on Kalshi is still at or below ${U.cents(p.maxEntry)} before entering.` });
     }
     return out;
   }
@@ -4231,8 +4318,8 @@ const UI = (() => {
   const DEPLOY = 'https://vercel.com/new/import?s=' + encodeURIComponent('https://github.com/montroseweb/courtside-edge');
   function kalshiNote(g) {
     const st = KALSHI.status(), h = NET.health('kalshi');
-    if (KALSHI.hasGame(g.kkey)) return '';
     if (NET.isDemo()) return '';
+    if (KALSHI.hasGame(g.kkey)) return st.snapMode ? `<div class="knote ok"><b>Real Kalshi prices via the published feed</b> — updated ${U.ago(st.snapAt)} (refreshes about every minute). Your browser can't reach Kalshi directly from this host, so confirm the live price before entering. For second-by-second prices, use the Vercel copy. <a class="gel" href="${DEPLOY}" target="_blank" rel="noopener">Deploy on Vercel</a></div>` : '';
     const routes = NET.routes('kalshi').map((r) => `${U.esc(r.host)} (${r.kind}): ${U.esc(r.result)}`).join(' · ');
     if (st.reached || st.ok) {
       return `<div class="knote ok"><b>Kalshi connected</b> — ${st.events} NBA events found, none open for this game yet${st.unmatched.length ? ` (unmatched: ${U.esc(st.unmatched.join(', '))})` : ''}. Model and sportsbook picks are shown below.</div>`;
@@ -4352,9 +4439,10 @@ const UI = (() => {
   function renderFeeds() {
     const srcs = [['espn', 'ESPN', 'ESPN'], ['nba', 'NBA', 'NBA'], ['kalshi', 'KALSHI', 'KAL']];
     $('#feeds').innerHTML = srcs.map(([k, l, ls]) => {
-      const h = NET.health(k);
+      let h = NET.health(k);
+      if (k === 'kalshi') { const ks = KALSHI.status(); if (ks.snapMode && Date.now() - ks.snapAt < 5 * 60e3) h = { ...h, level: 'stale', lat: 0, err: '', mode: 'feed' }; }
       const tip = h.level === 'ok' ? `${l}: ${Math.round(h.lat)} ms · ${h.mode}` : h.err ? `${l}: ${h.err}` : `${l}: waiting`;
-      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
+      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.mode === 'feed' ? 'feed' : h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
     }).join('');
   }
 
@@ -4475,6 +4563,7 @@ const UI = (() => {
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
     if (fe && fe.active && Date.now() - fe.firstSeen < 90e3) chips.push('<span class="chipx new">NEW</span>');
+    if (p.delayed) chips.push(`<span class="chipx delayed">KALSHI · ${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
     if (p.modelOnly) chips.push('<span class="chipx model">MODEL · NO LIVE PRICE</span>');
     else if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
     if (!p.playable && !p.modelOnly) chips.push('<span class="chipx pass">PASS</span>');

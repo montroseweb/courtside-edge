@@ -18,8 +18,8 @@ const UI = (() => {
   const DEPLOY = 'https://vercel.com/new/import?s=' + encodeURIComponent('https://github.com/montroseweb/courtside-edge');
   function kalshiNote(g) {
     const st = KALSHI.status(), h = NET.health('kalshi');
-    if (KALSHI.hasGame(g.kkey)) return '';
     if (NET.isDemo()) return '';
+    if (KALSHI.hasGame(g.kkey)) return st.snapMode ? `<div class="knote ok"><b>Real Kalshi prices via the published feed</b> — updated ${U.ago(st.snapAt)} (refreshes about every minute). Your browser can't reach Kalshi directly from this host, so confirm the live price before entering. For second-by-second prices, use the Vercel copy. <a class="gel" href="${DEPLOY}" target="_blank" rel="noopener">Deploy on Vercel</a></div>` : '';
     const routes = NET.routes('kalshi').map((r) => `${U.esc(r.host)} (${r.kind}): ${U.esc(r.result)}`).join(' · ');
     if (st.reached || st.ok) {
       return `<div class="knote ok"><b>Kalshi connected</b> — ${st.events} NBA events found, none open for this game yet${st.unmatched.length ? ` (unmatched: ${U.esc(st.unmatched.join(', '))})` : ''}. Model and sportsbook picks are shown below.</div>`;
@@ -139,9 +139,10 @@ const UI = (() => {
   function renderFeeds() {
     const srcs = [['espn', 'ESPN', 'ESPN'], ['nba', 'NBA', 'NBA'], ['kalshi', 'KALSHI', 'KAL']];
     $('#feeds').innerHTML = srcs.map(([k, l, ls]) => {
-      const h = NET.health(k);
+      let h = NET.health(k);
+      if (k === 'kalshi') { const ks = KALSHI.status(); if (ks.snapMode && Date.now() - ks.snapAt < 5 * 60e3) h = { ...h, level: 'stale', lat: 0, err: '', mode: 'feed' }; }
       const tip = h.level === 'ok' ? `${l}: ${Math.round(h.lat)} ms · ${h.mode}` : h.err ? `${l}: ${h.err}` : `${l}: waiting`;
-      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
+      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.mode === 'feed' ? 'feed' : h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
     }).join('');
   }
 
@@ -262,6 +263,7 @@ const UI = (() => {
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
     if (fe && fe.active && Date.now() - fe.firstSeen < 90e3) chips.push('<span class="chipx new">NEW</span>');
+    if (p.delayed) chips.push(`<span class="chipx delayed">KALSHI · ${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
     if (p.modelOnly) chips.push('<span class="chipx model">MODEL · NO LIVE PRICE</span>');
     else if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
     if (!p.playable && !p.modelOnly) chips.push('<span class="chipx pass">PASS</span>');

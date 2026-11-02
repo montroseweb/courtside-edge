@@ -3,7 +3,7 @@ name: kalshi-snapshot
 # githack-hosted page can read them (Kalshi blocks direct browser requests).
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '7,37 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -12,11 +12,11 @@ permissions:
   contents: write
 concurrency:
   group: kalshi-snapshot
-  cancel-in-progress: false
+  cancel-in-progress: true   # each new run (every 30 min) replaces the previous one
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,5 +25,5 @@ jobs:
       - run: node tools/kalshi-snapshot.js
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_MINUTES: '28'
+          RUN_MINUTES: '45'
           EVERY_SECONDS: '55'

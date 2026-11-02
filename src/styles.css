@@ -309,6 +309,7 @@ input[type="checkbox"] { accent-color: var(--aero); }
 .chipx.live { background: #c8261c; color: #fff; }
 .chipx.lag { background: var(--warn); color: #241900; }
 .chipx.new { background: var(--aero); color: #001427; }
+.chipx.delayed { background: #6b5a1f; color: #fff3cf; }
 .chipx.model { background: #2a4a6b; color: #cfe6ff; }
 .chipx.book { background: #1f5f3a; color: #d6ffe4; }
 .knote { display: grid; gap: 8px; padding: 9px 11px; border-radius: 7px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); background: rgba(73, 176, 255, 0.08); border: 1px solid rgba(73, 176, 255, 0.35); }
