@@ -147,31 +147,56 @@ const UI = (() => {
   }
 
   // ---------- ticker (top edges across the slate) ----------
+  // ---------- Buy Now ----------
+  const kalshiBuyable = (p) => !p.modelOnly && !p.book;
+  function buyRow(p, g, rank, feedMap) {
+    const fe = feedMap.get(p.id);
+    const clock = g.state === 'in' ? `${U.periodShort(g.period)} ${U.fmtClock(g.clockSec)}` : U.localTime(g.date);
+    return `<button class="tk bn tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
+        <span class="bn-rank">${rank}</span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · conf ${U.pct(p.fair)}${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
+          <span class="bn-buy">BUY ${p.side} at ≤ ${U.cents(p.maxEntry)} <em>now ${U.cents(p.price)}</em></span></span>
+        <span class="tk-side"><b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
+      </button>`;
+  }
+  function watchRow(p, g) {
+    return `<button class="tk wl" data-game="${g.id}" data-pick="${U.esc(p.id)}">
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now ${U.cents(p.price)}`} · fair ${U.cents(p.fair)}</small></span>
+        <span class="tk-side"><b>≤ ${U.cents(p.maxEntry)}</b><small>buy below</small></span>
+      </button>`;
+  }
+  function buyLists(games) {
+    const buy = [], watch = [], model = [];
+    for (const g of games) {
+      if (!g.eval || g.state === 'post') continue;
+      for (const p of g.eval.picks) {
+        if (!kalshiBuyable(p)) continue;
+        if (p.playable) buy.push({ p, g });
+        else if (p.fair > p.price - 0.06 && p.maxEntry > 0.03) watch.push({ p, g });
+      }
+      for (const p of (g.eval.models || []).slice(0, 4)) model.push({ p, g });
+    }
+    buy.sort((a, b) => b.p.edge - a.p.edge || b.p.rating - a.p.rating);
+    watch.sort((a, b) => (a.p.price - a.p.maxEntry) - (b.p.price - b.p.maxEntry));
+    model.sort((a, b) => b.p.rating - a.p.rating);
+    return { buy, watch, model };
+  }
+  function buyHTML(lists, max, empty) {
+    const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
+    if (lists.buy.length) return lists.buy.slice(0, max).map(({ p, g }, i) => buyRow(p, g, i + 1, feedMap)).join('');
+    let h = `<p class="muted small bn-empty">${empty}</p>`;
+    if (lists.watch.length) h += `<h4 class="subh">Watch — buy if the price drops</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
+    else if (lists.model.length) h += `<h4 class="subh">Model overs — check the price on Kalshi</h4>` + lists.model.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
+    return h;
+  }
   function renderTicker() {
     const el = $('#ticker');
     if (busy() || Date.now() - lastTicker < 2000) return;
     lastTicker = Date.now();
-    const all = [];
-    for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of g.eval.picks) if (p.playable) all.push({ p, g });
-    all.sort((a, b) => b.p.rating - a.p.rating);
-    if (!all.length) { // no priced edges anywhere (e.g. Kalshi blocked): show the strongest model picks
-      for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of (g.eval.models || []).slice(0, 3)) all.push({ p, g });
-      all.sort((a, b) => b.p.rating - a.p.rating);
-    }
-    const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
-    if (!all.length) {
-      lastTickerHTML = '';
-      el.innerHTML = `<p class="muted">${KALSHI.status().markets ? 'No prices beat the models by enough right now. New edges appear here with a timestamp the moment they open.' : 'Waiting for Kalshi prices…'}</p>`;
-      return;
-    }
-    const html = all.slice(0, 10).map(({ p, g }) => {
-      const fe = feedMap.get(p.id);
-      return `<button class="tk tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
-        <span class="tk-badge">${p.tier ? p.tier : 'OVR'}<b>${p.rating}</b></span>
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? `${p.side} if ≤ ${U.cents(p.maxEntry)} · no live price` : p.book ? `${U.esc(p.book)} ${PICKS.fmtAm(p.am)} → fair ${U.cents(p.fair)}` : `buy ${p.side} ${U.cents(p.price)} → fair ${U.cents(p.fair)}`}</small></span>
-        <span class="tk-side">${p.modelOnly ? `<b>${U.pct(p.fair)}</b><small>model · ≤${U.cents(p.maxEntry)}</small>` : `<b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : ''}${p.lag ? ' · LAG' : ''}</small>`}</span>
-      </button>`;
-    }).join('');
+    const lists = buyLists(STATE.list);
+    const st = KALSHI.status();
+    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'No Kalshi price is under the max entry right now. New buys appear here the moment they open.';
+    const html = buyHTML(lists, 10, empty);
     if (html !== lastTickerHTML) { el.innerHTML = html; lastTickerHTML = html; }
   }
 
@@ -186,6 +211,7 @@ const UI = (() => {
       <div class="titlebar big"><span class="ticon"></span><span class="tb-t">Pick Finder — ${U.esc(g.away.abbr)} @ ${U.esc(g.home.abbr)}</span>
         <span class="wbtns"><button class="wb mn" aria-hidden="true" tabindex="-1"></button><button class="wb mx" aria-hidden="true" tabindex="-1"></button><button class="wb cl" id="fClose" aria-label="Close Pick Finder">✕</button></span></div>
       <div class="fbody">
+        <section class="pane buynow"><h3>Buy Now<small id="fBuyN"></small></h3><div id="fBuy"></div></section>
         <section class="fhero">
           <div class="courtbox big"><canvas class="court"></canvas></div>
           <div class="lcd big">
@@ -221,6 +247,7 @@ const UI = (() => {
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
     $('#fSort').value = F.sort; $('#fSort').onchange = (e) => { F.sort = e.target.value; updateFinder(true); };
+    $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
     $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const id2 = d.closest('.pick')?.dataset.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
     el.scrollTop = 0;
     updateFinder(true);
@@ -244,7 +271,7 @@ const UI = (() => {
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
     const key = { rating: (p) => p.rating, edge: (p) => p.edge ?? p.lean ?? 0, roi: (p) => p.roi ?? p.lean ?? 0, conf: (p) => p.fair }[F.sort];
-    return [...ps].sort((a, b) => key(b) - key(a));
+    return [...ps].sort((a, b) => (b.playable - a.playable) || key(b) - key(a)); // buyable first
   }
 
   const amOf = (pr) => (pr <= 0 || pr >= 1 ? '—' : pr >= 0.5 ? '−' + Math.round(pr / (1 - pr) * 100) : '+' + Math.round((1 - pr) / pr * 100));
@@ -382,6 +409,9 @@ const UI = (() => {
       if (ms.length) html += `<h4 class="subh">Model picks — no live price on this line yet</h4><p class="muted small">Best lean per player and stat on Kalshi's standard lines, ranked. Enter only at or below the Buy-if price.</p>` + ms.slice(0, 30).map((p) => pickHTML(p, g)).join('');
       if (!ps.length && !ms.length) html += `<p class="muted">${rec?.loading || !rec ? 'Loading game logs and injury reports to build picks…' : g.state === 'post' ? 'This game is final.' : 'No picks match this filter.'}</p>`;
       $('#fList').innerHTML = html;
+      const bl = buyLists([g]);
+      $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} to buy at current prices` : 'nothing to buy right now';
+      $('#fBuy').innerHTML = buyHTML(bl, 6, KALSHI.hasGame(g.kkey) ? 'No Kalshi price for this game is under the max entry right now.' : 'No Kalshi prices for this game yet.');
       renderFeed(g);
       $('#fBoard').innerHTML = boardHTML(g);
       $('#fIntel').innerHTML = intelHTML(g);

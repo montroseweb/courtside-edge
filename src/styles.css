@@ -132,6 +132,17 @@ button { font: inherit; color: inherit; }
 #ticker { display: grid; gap: 6px; padding: 8px; max-height: 330px; overflow-y: auto; }
 #ticker p { margin: 4px 6px; font-size: 13px; }
 .tk { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; text-align: left; padding: 7px 9px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(255, 255, 255, 0.12); background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)); }
+.buynow-w { border-color: rgba(82, 210, 115, 0.6); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 0 22px rgba(82, 210, 115, 0.22), 0 14px 34px rgba(0, 0, 0, 0.5); }
+.buynow-w .titlebar .tb-t { font-size: 15px; }
+.pane.buynow { border-color: rgba(82, 210, 115, 0.55); }
+.pane.buynow > div { display: grid; gap: 6px; }
+.bn { grid-template-columns: auto 1fr auto; border-color: rgba(82, 210, 115, 0.35); }
+.bn-rank { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 600 20px/1 var(--f-display); color: #062411; background: radial-gradient(circle at 40% 30%, #c6ffd3, #2fb457 60%, #1b7a3a); border: 1px solid rgba(0, 0, 0, 0.6); box-shadow: 0 0 10px rgba(82, 210, 115, 0.5); }
+.bn-buy { display: inline-block; margin-top: 3px; font: 600 12px/1.3 var(--f-body); color: #062411; background: linear-gradient(180deg, #9cf5b3, #2fb457 50%, #1f8c40 51%, #34b45c); border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 4px; padding: 2px 7px; justify-self: start; }
+.bn-buy em { font-style: normal; font-weight: 400; opacity: 0.8; margin-left: 4px; }
+.tk-main .bn-buy { white-space: nowrap; }
+.wl { grid-template-columns: 1fr auto; opacity: 0.92; }
+.bn-empty { margin: 2px 4px 6px; }
 .tk:hover { border-color: rgba(120, 200, 255, 0.5); box-shadow: 0 0 12px rgba(73, 176, 255, 0.25); }
 .tk-main { min-width: 0; display: grid; }
 .tk-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

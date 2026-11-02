@@ -101,8 +101,8 @@ const PICKS = (() => {
           if (!fp || fp.hit || fp.p == null) continue;
           const base = lb ? MODEL.propPregameProb(pl.proj, stat, th)?.p : naiveProb(pl, stat, k);
           if (base == null || !isFinite(base)) continue;
-          const lean = fp.p - base, yes = lean >= 0, fair = yes ? fp.p : 1 - fp.p;
-          if (fair < 0.35 || fair > 0.92) continue; // actionable band
+          const lean = fp.p - base, yes = true, fair = fp.p; // overs only
+          if (lean < 0.01 || fair < 0.35 || fair > 0.92) continue; // model must be above baseline; actionable band
           const score = Math.abs(lean) + 0.15 * (fair - 0.5);
           if (!best || score > best.score) best = { k, th, fp, base, lean, yes, fair, score };
         }
@@ -190,6 +190,7 @@ const PICKS = (() => {
       data.fp = fp;
 
       for (const yes of [true, false]) {
+        if (m.kind === 'prop' && (!yes || m.th?.op === '<')) continue; // player props: overs only (buy YES on "X+")
         const price = yes ? m.yesAsk : m.noAsk;
         if (price == null || price <= 0.02 || price >= 0.96) continue; // no value in 97¢+ contracts
         const fair = yes ? fp.p : 1 - fp.p;
