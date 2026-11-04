@@ -276,7 +276,7 @@ const COURT = (() => {
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     const t = (now - inst.t0) / 1000;
     const live = g.state === 'in', pre = g.state === 'pre', post = g.state === 'post';
-    const awayC = '#' + U.onDark(g.away.color), homeC = '#' + U.onDark(g.home.color);
+    const [awc, hmc] = U.pairColors(g.away, g.home); const awayC = '#' + awc, homeC = '#' + hmc;
 
     // momentum glow on the attacking half of the team on a run
     if (live && g.run && g.run.pts - g.run.opp >= 5) {

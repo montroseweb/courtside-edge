@@ -195,7 +195,19 @@ const U = (() => {
   }
   function lum(h) { const { r, g, b } = hexToRgb(h); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; }
   // pick a readable version of a team color on dark glass
-  const onDark = (h) => (lum(h) < 0.28 ? shade(h, 0.45) : h);
+  const onDark = (h) => { h = String(h || '').replace('#', ''); return lum(h) < 0.12 ? shade(h, 0.35).slice(1) : h; };
+  // perceptual ("redmean") color distance
+  const cdist = (a, b) => { const x = hexToRgb(a), y = hexToRgb(b), rm = (x.r + y.r) / 2, dr = x.r - y.r, dg = x.g - y.g, db = x.b - y.b; return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db); };
+  // two distinguishable team colors for side-by-side fills (falls back to an alternate color when they clash)
+  function pairColors(away, home) {
+    let a = onDark(away.color), h = onDark(home.color);
+    if (cdist(a, h) < 140) {
+      const sat = (c) => { const x = hexToRgb(c); return Math.max(x.r, x.g, x.b) - Math.min(x.r, x.g, x.b); };
+      const pick = (t, other) => [t.alt, t.meta?.alt, t.meta?.court?.accent, t.meta?.court?.paint].filter(Boolean).map((c) => onDark(c)).find((c) => cdist(c, other) >= 140 && sat(c) > 50);
+      const aa = pick(away, h); if (aa) a = aa; else { const hh = pick(home, a); if (hh) h = hh; else a = onDark(away.alt || '888888'); }
+    }
+    return [a, h];
+  }
 
   // seeded rng (for deterministic textures)
   function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -212,6 +224,6 @@ const U = (() => {
     amToProb, fee, breakEven, KALSHI_FEE_RATE, cents, pct, signed,
     etParts, etDateKey, addDaysKey, kalshiDateCode, seasonFor, dayLabel, ago, countdown, localTime, isoDur, clockStr, fmtClock,
     periodName, periodShort, minutesRemaining, minutesElapsed,
-    normName, nameScore, esc, num, hexToRgb, rgba, shade, lum, onDark, rng, hash, store,
+    normName, nameScore, esc, num, hexToRgb, rgba, shade, lum, onDark, pairColors, cdist, rng, hash, store,
   };
 })();

@@ -9,9 +9,10 @@ const UI = (() => {
   const cards = new Map(); // gameId → {el, court, refs}
   let finder = null;       // {id, court, refs}
   const openDetails = new Set();
-  const F = { filter: 'all', sort: 'rating', playable: false };
+  const F = { filter: 'all', sort: 'edge', playable: false, noCombo: !!U.store.get('nocombo', false) };
+  const isCombo = (p) => p.kind === 'prop' && !!MODEL.COMBO[p.stat];
   let lastListRender = 0, lastChartRender = 0, lastTicker = 0, lastTickerHTML = '', lastTouch = 0;
-  const busy = () => Date.now() - lastTouch < 2000;
+  const busy = () => Date.now() - lastTouch < 2500;
 
   const clearHash = () => { try { history.replaceState(null, '', location.pathname + location.search); } catch { location.hash = ''; } };
   const dur = (ms) => { const sec = Math.max(1, Math.round(ms / 1000)); return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + String(sec % 60).padStart(2, '0') + 's'; };
@@ -54,11 +55,12 @@ const UI = (() => {
     const r = root._wp || (root._wp = { l: $('.wp-l', root), r: $('.wp-r', root), A: $('.wp-a', root), H: $('.wp-h', root), mk: $('.wp-mk', root), em: $('.wp-mk em', root) });
     r.l.textContent = Math.round(a * 100) + '%'; r.r.textContent = Math.round(p * 100) + '%';
     r.A.style.width = (a * 100).toFixed(1) + '%'; r.H.style.width = (p * 100).toFixed(1) + '%';
-    r.A.style.setProperty('--c', '#' + U.onDark(g.away.color)); r.H.style.setProperty('--c', '#' + U.onDark(g.home.color));
+    const [ca, ch] = U.pairColors(g.away, g.home);
+    r.A.style.setProperty('--c', '#' + ca); r.H.style.setProperty('--c', '#' + ch);
     r.l.classList.toggle('fav', a > 0.5); r.r.classList.toggle('fav', p > 0.5);
     if (g.kp != null) {
       r.mk.hidden = false; r.mk.style.left = ((1 - g.kp) * 100).toFixed(1) + '%';
-      const kh = Math.round(g.kp * 100); r.em.textContent = 'K ' + (100 - kh) + '|' + kh;
+      r.em.textContent = '';
       r.mk.title = `Kalshi market: ${g.away.abbr} ${Math.round((1 - g.kp) * 100)}¢ · ${g.home.abbr} ${Math.round(g.kp * 100)}¢`;
     } else r.mk.hidden = true;
   }
@@ -142,8 +144,9 @@ const UI = (() => {
     $('#feeds').innerHTML = srcs.map(([k, l, ls]) => {
       let h = NET.health(k);
       if (k === 'kalshi') { const ks = KALSHI.status(); if (ks.snapMode && Date.now() - ks.snapAt < 5 * 60e3) h = { ...h, level: 'stale', lat: 0, err: '', mode: 'feed' }; }
-      const tip = h.level === 'ok' ? `${l}: ${Math.round(h.lat)} ms · ${h.mode}` : h.err ? `${l}: ${h.err}` : `${l}: waiting`;
-      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.mode === 'feed' ? 'feed' : h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
+      if (k === 'nba' && h.level !== 'ok') { const e = NET.health('espn'); if (e.level === 'ok') h = { ...e, mode: 'espn', err: '' }; }
+      const tip = k === 'nba' && h.mode === 'espn' ? 'Live box score & play-by-play via ESPN (the NBA CDN blocks browsers on this host)' : h.level === 'ok' ? `${l}: ${Math.round(h.lat)} ms · ${h.mode}` : h.err ? `${l}: ${h.err}` : `${l}: waiting`;
+      return `<span class="led ${h.level}" title="${U.esc(tip)}"><i></i><b class="lf">${l}</b><b class="ls">${ls}</b><small>${h.mode === 'feed' ? 'feed' : h.mode === 'espn' ? 'via ESPN' : h.level === 'ok' ? Math.round(h.lat) + 'ms' : h.level === 'down' ? 'off' : '…'}</small></span>`;
     }).join('');
   }
 
@@ -156,14 +159,14 @@ const UI = (() => {
     return `<button class="tk bn tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
         <span class="bn-rank">${rank}</span>
         <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · implied ${(p.implied * 100).toFixed(1)}%${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
-          <span class="bn-buy">BUY ${p.side} ≤ $${p.buyMax.toFixed(2)} <em>now $${p.price.toFixed(2)} · true ${(p.fair * 100).toFixed(1)}%</em></span></span>
-        <span class="tk-side"><b class="pos">${U.signed(p.netEdge * 100, 2)}%</b><small>scale ${p.scale.toFixed(1)} · ${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
+          <span class="bn-buy">BUY ${p.side} ≤ ${Math.floor(p.buyMax * 100)}¢ <em>now ${Math.round(p.price * 100)}¢ · true ${(p.fair * 100).toFixed(1)}%</em></span></span>
+        <span class="tk-side"><b class="pos">${U.signed(p.netEdge * 100, 2)}%</b><small>¼K ${(p.kelly * 100).toFixed(2)}% · ${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
       </button>`;
   }
   function watchRow(p, g) {
     return `<button class="tk wl" data-game="${g.id}" data-pick="${U.esc(p.id)}">
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now $${p.price.toFixed(2)}`} · true ${(p.fair * 100).toFixed(1)}%</small></span>
-        <span class="tk-side"><b>≤ $${p.maxEntry.toFixed(2)}</b><small>buy zone</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now ${Math.round(p.price * 100)}¢`} · true ${(p.fair * 100).toFixed(1)}%</small></span>
+        <span class="tk-side"><b>≤ ${Math.floor(p.maxEntry * 100)}¢</b><small>buy zone</small></span>
       </button>`;
   }
   function buyLists(games) {
@@ -171,7 +174,7 @@ const UI = (() => {
     for (const g of games) {
       if (!g.eval || g.state === 'post') continue;
       for (const p of g.eval.picks) {
-        if (!kalshiBuyable(p)) continue;
+        if (!kalshiBuyable(p) || (F.noCombo && isCombo(p))) continue;
         if (p.playable) buy.push({ p, g });
         else if (p.survivor) watch.push({ p, g });
       }
@@ -190,20 +193,7 @@ const UI = (() => {
     else if (lists.model.length) h += `<h4 class="subh">Model overs — check the price on Kalshi</h4>` + lists.model.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     return h;
   }
-  function renderTicker() {
-    const el = $('#ticker');
-    if (busy() || Date.now() - lastTicker < 2000) return;
-    lastTicker = Date.now();
-    const lists = buyLists(STATE.list);
-    const st = KALSHI.status();
-    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'Zero contracts inside a buy zone (≥ +4.00% net edge, ≥ 30% true probability). Entries appear here the moment a price crosses.';
-    const html = buyHTML(lists, 10, empty);
-    if (html !== lastTickerHTML) { el.innerHTML = html; lastTickerHTML = html; }
-    // slate parlays (built from every game's Section 1 survivors)
-    const pool = []; for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of g.eval.survivors || []) pool.push({ p, g });
-    const pe = $('#slateParlays');
-    if (pe) { const ph = parlaysHTML(PARLAY.build(pool, { pool: 14, max: 3 }), 'No 2- or 3-leg combination clears +4.00% compound edge with non-negative correlation.'); if (ph !== pe._h) { pe.innerHTML = ph; pe._h = ph; } }
-  }
+  function renderTicker() { /* Buy Now and parlays live inside each game's Pick Finder */ }
 
   // ---------- Pick Finder ----------
   function openFinder(id) {
@@ -216,7 +206,6 @@ const UI = (() => {
       <div class="titlebar big"><span class="ticon"></span><span class="tb-t">Pick Finder — ${U.esc(g.away.abbr)} @ ${U.esc(g.home.abbr)}</span>
         <span class="wbtns"><button class="wb mn" aria-hidden="true" tabindex="-1"></button><button class="wb mx" aria-hidden="true" tabindex="-1"></button><button class="wb cl" id="fClose" aria-label="Close Pick Finder">✕</button></span></div>
       <div class="fbody">
-        <section class="pane buynow"><h3>Buy Now<small id="fBuyN"></small></h3><div id="fBuy"></div></section>
         <section class="fhero">
           <div class="courtbox big"><canvas class="court"></canvas></div>
           <div class="lcd big">
@@ -231,17 +220,20 @@ const UI = (() => {
         <div class="toolbar" role="toolbar">
           <div class="seg" id="fFilter">${[['all', 'All'], ['live', 'Live'], ['prop', 'Props'], ['line', 'Lines'], ['seg', 'Qtrs/Halves']].map(([k, l]) => `<button class="chip${F.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
           <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> Buy zone only</label>
+          <label class="chk"><input type="checkbox" id="fNoCombo" ${F.noCombo ? 'checked' : ''}> Hide PRA &amp; combos</label>
         </div>
+        <section class="pane roster"><h3>Verified Roster / Injury Status</h3><div id="fRoster"></div></section>
         <section class="pane"><h3>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
-        <section class="pane"><h3>Section 1 · Main Picks<small id="fUpd"></small></h3><div id="fList" class="plist"></div></section>
-        <section class="pane"><h3>Section 2 · Optimal Parlays<small>built from Section 1 survivors</small></h3><div id="fParlays" class="plist"></div></section>
-        <section class="pane"><h3>Live Pick Feed<small>buy-zone entries, timestamped</small></h3><ol id="fFeed" class="feed"></ol></section>
-        <section class="pane"><h3>Projection Board<small>model fair lines</small></h3><div id="fBoard"></div></section>
-        <section class="pane"><h3>Matchup Intel</h3><div id="fIntel" class="intel"></div></section>
-        <section class="pane notes"><h3>Risk protocol</h3>
-          <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN). Players not listed are fully active; a player in tonight's live box score is active regardless. A roster flag that the game report contradicts benches that player's props; no report loaded holds the whole game. Teammate usage shifts apply only to OUT (weight 1.00) and DOUBTFUL (0.75) designations. Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
-          <p><b>Phase 2 — stress tests.</b> Projected possessions = team A pace × team B pace ÷ league pace; volume scales by game possessions ÷ the player's team baseline; efficiency by the opponent's points allowed per 100 possessions; both blended 50/50 with the market-implied team total. Usage proxy (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate (date-joined game logs). Fatigue matrix: back-to-back, 3-in-4, 5 road games in 7, time-zone shifts within 24h, visiting altitude. Gates: net edge (true − implied) ≥ +4.00%; true probability ≥ 30% unless net edge ≥ +10 pts and ROI ≥ +60%; props whose L10 hit rate is ≥ 70% while the projection sits below 95% of the L10 average are deleted. Player props are overs only.</p>
-          <p><b>Phase 3 — sizing.</b> Allocation scale 0–10 = ¼-Kelly ÷ 3% of bankroll (props and lines) or ¼-Kelly × variance haircut (0.85 two-leg, 0.70 three-leg) ÷ 2% (parlays). Parlays use only Section 1 survivors, must mix props with game lines when both exist, and bar any pair with negative or redundant correlation; joint probability uses a Gaussian copula (Kirkwood product for three legs). Not in any public feed and therefore not applied: individual defensive ratings, play-type and zone defense, on-court usage %, coaching minute caps. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></section>
+        <details class="pane fold buynow" id="fBuyBox"><summary><h3>Buy Now<small id="fBuyN"></small></h3></summary><div id="fBuy"></div></details>
+        <details class="pane fold" id="fSec1" open><summary><h3>Section 1 · Main Picks<small id="fUpd"></small></h3></summary><div id="fList" class="plist"></div></details>
+        <details class="pane fold" id="fSec2" open><summary><h3>Section 2 · Optimal Parlays<small id="fParN"></small></h3></summary><div id="fParlays" class="plist"></div></details>
+        <details class="pane fold" id="fFeedBox"><summary><h3>Live Pick Feed<small>buy-zone entries</small></h3></summary><ol id="fFeed" class="feed"></ol></details>
+        <details class="pane fold" id="fBoardBox"><summary><h3>Projection Board</h3></summary><div id="fBoard"></div></details>
+        <details class="pane fold" id="fIntelBox"><summary><h3>Matchup Intel</h3></summary><div id="fIntel" class="intel"></div></details>
+        <details class="pane fold notes"><summary><h3>Risk protocol</h3></summary>
+          <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN); ESPN team news can only bench a player (never activate one). Players not listed are fully active; a player in tonight's live box score is active. Teammate usage shifts apply only to OUT (1.00) and DOUBTFUL (0.75). Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
+          <p><b>Phase 2 — stress tests.</b> Possessions = home pace (home games) × away pace (road games) ÷ league, from each team's recent box scores. Volume scales to tonight's possessions; efficiency to the opponent's points allowed per 100 possessions, defense-vs-position, shot-zone and shot-type defense, and transition defense (each shrunk toward league by sample size); all blended 50/50 with the market-implied team total. Usage (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate; minutes ramps after absences and role changes inferred from logs; news-reported minute limits and starting-role changes applied. Fatigue: back-to-back, 3-in-4, road stretches, time zones, altitude. Gates: net edge ≥ +4.00%, true probability ≥ 30% (or edge ≥ +10 and ROI ≥ +60%), trend sanitization, prices ≤ 10 min old. Player props are overs only.</p>
+          <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlays use only Section 1 survivors, mix props with game lines when both exist, and bar negative or redundant correlations (Gaussian copula; Kirkwood product for three legs). Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
       </div></div>`;
     el.hidden = false;
     document.body.classList.add('finder-open');
@@ -251,8 +243,38 @@ const UI = (() => {
     $('#fClose').onclick = () => { clearHash(); closeFinder(); };
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
+    $('#fNoCombo').onchange = (e) => { F.noCombo = e.target.checked; U.store.set('nocombo', F.noCombo); updateFinder(true); };
+    for (const id2 of ['fBuyBox', 'fSec1', 'fSec2', 'fFeedBox', 'fBoardBox', 'fIntelBox']) $('#' + id2).addEventListener('toggle', () => updateFinder(true));
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
-    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const pk = d.closest('.pick'); const id2 = pk?.dataset.id || pk?.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
+    // per-card tabs (History / Evidence): one panel at a time, state kept across refreshes, built on demand
+    const findPick = (pid) => { const g = STATE.games.get(finder?.id); return g && (g.eval?.picks || []).concat(g.eval?.models || []).find((x) => x.id === pid); };
+    const onTab = (e) => {
+      const t = e.target.closest('.tab'); if (!t) return;
+      lastTouch = Date.now();
+      const card = t.closest('.pick'), k = t.dataset.k, pid = card.dataset.id, g = STATE.games.get(finder?.id);
+      const was = openDetails.has(k);
+      card.querySelectorAll('.tab').forEach((x) => { openDetails.delete(x.dataset.k); x.classList.remove('on'); });
+      const panel = card.querySelector('.pk-panel');
+      if (was) { panel.innerHTML = ''; return; }
+      openDetails.add(k); t.classList.add('on');
+      if (pid.startsWith('px-')) { updateFinder(true); return; }
+      const p = findPick(pid); if (!p || !g) return;
+      panel.innerHTML = k.endsWith(':hist') ? `<div class="histbox">${histHTML(p)}</div>` : evidenceHTML(p, g);
+    };
+    $('#fList').addEventListener('click', onTab);
+    $('#fParlays').addEventListener('click', onTab);
+    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS' || !d.dataset.k) return; if (d.open) openDetails.add(d.dataset.k); else openDetails.delete(d.dataset.k); updateFinder(true); }, true);
+    // tap a history bar → tooltip with opponent and minutes
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('.hb'); if (!b) return;
+      lastTouch = Date.now() + 2500;
+      const wrap = b.closest('.hwrap'), tip = wrap.querySelector('.htip');
+      const r = b.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+      tip.textContent = b.dataset.tip; tip.hidden = false;
+      const tw = tip.offsetWidth / 2 + 4;
+      tip.style.left = U.clamp(r.left - w.left + r.width / 2, tw, Math.max(tw, w.width - tw)) + 'px';
+      wrap.querySelectorAll('.hb.on').forEach((x) => x.classList.remove('on')); b.classList.add('on');
+    });
     el.scrollTop = 0;
     updateFinder(true);
     APP.focus(id);
@@ -274,6 +296,7 @@ const UI = (() => {
     else if (F.filter === 'line') ps = ps.filter((p) => p.kind !== 'prop' && !p.seg);
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
+    if (F.noCombo) ps = ps.filter((p) => !isCombo(p));
     // strict descending order by net mathematical edge (model-only lines by lean)
     return [...ps].sort((a, b) => (b.netEdge ?? b.lean ?? -1) - (a.netEdge ?? a.lean ?? -1));
   }
@@ -303,70 +326,111 @@ const UI = (() => {
     if (p.book) return `${sel} at ${PICKS.fmtAm(p.am)} (${U.esc(p.book)})`;
     return `${sel} at $${p.price.toFixed(2)} Kalshi ${p.side} ask (${amOf(p.price)})${p.delayed ? ` · price ${U.ago(p.m.snapAt)}` : ''}`;
   }
-  // three-zone bracket: BUY ZONE ≤ buyMax (≥4.00 pts edge) · FAIR VALUE ZONE ≤ break-even · DO NOT BUY above
-  function entryBar(p) {
+  // three-zone bracket in cents per contract: BUY ≤ buyMax (≥ +4.00 pts edge) · FAIR ≤ break-even · DO NOT BUY above
+  const c0 = (x) => Math.round(x * 100) + '¢';
+  const c1 = (x) => (x * 100).toFixed(1) + '¢';
+  function bracket(buyMax, fairMax, now, fmt) {
     const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
-    const am = (v) => (p.book ? ` (${amOf(v)})` : '');
-    return `<div class="entry" aria-label="Price-to-value bracket">
-      <div class="eb"><i class="g" style="width:${pos(p.buyMax)}"></i><i class="y" style="left:${pos(p.buyMax)};width:${U.clamp((p.fairMax - p.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.fairMax)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
-      ${(() => { const bt = Math.floor(p.buyMax * 100) / 100, ft = Math.max(bt, Math.floor(p.fairMax * 100) / 100); return `<div class="el"><span>BUY ZONE ≤ <b>$${bt.toFixed(2)}${am(bt)}</b></span>${ft > bt ? `<span>FAIR VALUE $${(bt + 0.01).toFixed(2)}–$${ft.toFixed(2)}</span>` : ''}<span class="bad">DO NOT BUY ≥ <b>$${(ft + 0.01).toFixed(2)}${am(ft + 0.01)}</b></span></div>`; })()}
-    </div>`;
+    const bt = fmt === c0 ? Math.floor(buyMax * 100) / 100 : buyMax, ft = fmt === c0 ? Math.max(bt, Math.floor(fairMax * 100) / 100) : Math.max(bt, fairMax);
+    const step = fmt === c0 ? 0.01 : 0.001;
+    return `<div class="entry"><div class="eb"><i class="g" style="width:${pos(bt)}"></i><i class="y" style="left:${pos(bt)};width:${U.clamp((ft - bt) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(ft)}"></i>${now != null ? `<b class="now" style="left:${pos(now)}"></b>` : ''}</div>
+      <div class="el"><span class="g">BUY ≤ ${fmt(bt)}</span>${ft > bt ? `<span>FAIR ${fmt(bt + step)}–${fmt(ft)}</span>` : ''}<span class="bad">DO NOT BUY ≥ ${fmt(ft + step)}</span></div></div>`;
   }
+  const kellyPct = (k) => (k * 100).toFixed(2) + '%';
+  function statRow(cells) { return `<div class="pk-row">${cells.map(([l, v, cls]) => `<div><label>${l}</label><b${cls ? ` class="${cls}"` : ''}>${v}</b></div>`).join('')}</div>`; }
+
+  // ---- History: last 10 games and last 10 vs tonight's opponent (lazy; built only when opened) ----
+  function histChart(rows, stat, k, title, uid) {
+    if (!rows.length) return `<div class="hchart"><h5>${title}</h5><p class="muted small">No games in the last two seasons.</p></div>`;
+    const W = 320, H = 132, T = 14, B = 22, L = 4, Rr = 4, n = rows.length;
+    const vals = rows.map((r) => MODEL.statVal(r, stat));
+    const top = Math.max(k ?? 0, ...vals, 1) * 1.15;
+    const slot = (W - L - Rr) / Math.max(n, 5), bw = Math.min(26, slot * 0.68);
+    const y = (v) => H - B - (v / top) * (H - T - B);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" class="hsvg" role="img" aria-label="${U.esc(title)}"><defs>
+      <linearGradient id="h${uid}g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#9cf5b3"/><stop offset=".5" stop-color="#2fb457"/><stop offset=".51" stop-color="#1f8c40"/><stop offset="1" stop-color="#34b45c"/></linearGradient>
+      <linearGradient id="h${uid}m" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#b9c6d6"/><stop offset=".5" stop-color="#6b7c90"/><stop offset=".51" stop-color="#55657a"/><stop offset="1" stop-color="#6b7c90"/></linearGradient></defs>`;
+    svg += `<line x1="${L}" x2="${W - Rr}" y1="${H - B}" y2="${H - B}" class="hbase"/>`;
+    if (k != null) svg += `<line x1="${L}" x2="${W - Rr}" y1="${y(k)}" y2="${y(k)}" class="hline"/><text x="${W - Rr - 2}" y="${y(k) - 3}" text-anchor="end" class="hlab">${k}+</text>`;
+    rows.forEach((r, i) => {
+      const v = vals[i], x = L + slot * i + (slot - bw) / 2, yy = y(v), h = Math.max(0, H - B - yy), hit = k != null && v >= k;
+      const d = new Date(r.date), tip = `vs ${r.opp} · ${Math.round(r.min)} min · ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${v} ${MODEL.SHORT[stat] || stat}`;
+      svg += `<g class="hb" data-tip="${U.esc(tip)}" tabindex="0"><rect x="${x - 3}" y="${T}" width="${bw + 6}" height="${H - T - B + 14}" fill="transparent"/>`;
+      if (h > 0) svg += `<rect x="${x}" y="${yy}" width="${bw}" height="${h}" rx="3" fill="url(#h${uid}${hit ? 'g' : 'm'})" stroke="rgba(0,0,0,.6)" stroke-width="1"/><rect x="${x + 2}" y="${yy + 1}" width="${Math.max(0, bw - 4)}" height="${Math.min(6, h / 2)}" rx="2" fill="rgba(255,255,255,.35)"/>`;
+      svg += `<text x="${x + bw / 2}" y="${H - B - 4}" text-anchor="middle" class="hval">${v}</text><text x="${x + bw / 2}" y="${H - 7}" text-anchor="middle" class="hopp">${U.esc(r.opp || '')}</text></g>`;
+    });
+    const hits = k != null ? vals.filter((v) => v >= k).length : 0;
+    return `<div class="hchart"><h5>${title}<small>${k != null ? `${hits}/${n} at ${k}+ · avg ${(U.sum(vals) / n).toFixed(1)}` : ''}</small></h5><div class="hwrap">${svg}</svg><div class="htip" hidden></div></div></div>`;
+  }
+  function histHTML(p) {
+    const pl = p.data.player, st = p.m.stat, k = p.m.th?.k, games = (pl.proj?.games || []);
+    const uid = U.hash(p.id).toString(36);
+    const last = games.slice(0, 10).reverse();
+    const vs = games.filter((r) => r.opp === pl.ctx?.opp).slice(0, 10).reverse();
+    const S = MODEL.SHORT[st] || st;
+    return histChart(last, st, k, `Last 10 games · ${S}`, uid + 'a') + histChart(vs, st, k, `Last ${vs.length || 10} vs ${pl.ctx?.opp || 'opponent'} · ${S}`, uid + 'b');
+  }
+
   function pickHTML(p, g) {
     const fe = PICKS.feed(g.id).find((e) => e.key === p.id);
-    const ev = p.modelOnly ? null : PICKS.evidence(p, g);
     const chips = [];
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
     if (p.playable) chips.push('<span class="chipx new">BUY ZONE</span>');
-    if (p.delayed) chips.push(`<span class="chipx delayed">KALSHI · ${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
+    if (p.delayed) chips.push(`<span class="chipx delayed">${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
     if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
-    if (fe) chips.push(`<span>logged ${U.ago(fe.firstSeen)} · ${U.esc(fe.periodTag)}</span>`);
+    const stc = p.kind === 'prop' ? p.data.player.st?.code : null;
+    if (stc && stc !== 'ACTIVE') chips.push(`<span class="chipx lag">${U.esc(stc)}</span>`);
+    if (fe) { const m = Math.max(0, Math.round((Date.now() - fe.firstSeen) / 60000)); chips.push(`<span>logged ${m ? m + 'm' : '<1m'} ago · ${U.esc(fe.periodTag)}</span>`); }
+    if (p.reason) chips.push(`<span class="rejt">${U.esc(p.reason)}</span>`);
     const [who, sel] = heading(p, g);
-    const evd = ev || PICKS.evidence(p, g);
-    return `<article class="pick rep tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
-      <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span>
-        <span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b><small>${U.esc(p.sub)}</small></span>
-        <span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
-      <ul class="facts">
-        <li><label>Verified Roster/Injury Status</label><span>${U.esc(evd.status)}</span></li>
-        <li><label>Current Market Line / Kalshi Ask Contract Price</label><span>${U.esc(marketLine(p, g))}</span></li>
-        ${p.modelOnly ? '' : `<li><label>Market Implied Winning Probability</label><b>${P2(p.implied)}</b></li>`}
-        <li><label>Algorithmic True Winning Probability</label><b>${P2(p.fair)}</b></li>
-        ${p.modelOnly ? '' : `<li><label>Net Mathematical Inefficiency Edge</label><b class="${p.netEdge >= 0 ? 'pos' : 'neg'}">${U.signed(p.netEdge * 100, 2)}%</b></li>
-        <li><label>Volumetric Allocation Scale (0-10)</label><b>${p.scale.toFixed(1)}</b><small>¼-Kelly ${(p.kelly * 100).toFixed(2)}% of bankroll</small></li>`}
-        ${p.reason ? `<li class="rej"><label>Stress-test result</label><span>REJECTED — ${U.esc(p.reason)}</span></li>` : ''}
-      </ul>
-      ${entryBar(p)}
-      <div class="pk-m">${chips.join('')}</div>
-      <details${openDetails.has(p.id) ? ' open' : ''}><summary>Data-Driven Strategic Evidence</summary><ul class="evs">${evd.sections.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
+    const pid = U.esc(p.id), hk = p.id + ':hist', ek = p.id + ':ev';
+    const askLabel = p.book ? U.esc(p.book) : 'Kalshi Ask';
+    const cells = p.modelOnly
+      ? [['Kalshi Ask', 'no quote'], ['True Probability', P2(p.fair)], ['Buy if ≤', c0(p.buyMax), 'pos'], ['1/4-Kelly % of bankroll', '—']]
+      : [[askLabel, p.book ? `${c0(p.price)}<em>${PICKS.fmtAm(p.am)}</em>` : c0(p.price)], ['True Probability', P2(p.fair)], ['Mathematical Edge', U.signed(p.netEdge * 100, 2) + '%', p.netEdge >= 0 ? 'pos' : 'neg'], ['1/4-Kelly % of bankroll', kellyPct(p.kelly)]];
+    const showHist = p.kind === 'prop' && p.data.player?.proj;
+    return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${pid}">
+      <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span><span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b></span><span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
+      ${statRow(cells)}
+      ${bracket(p.buyMax, p.fairMax, p.price, c0)}
+      ${chips.length ? `<div class="pk-m">${chips.join('')}</div>` : ''}
+      <div class="pk-tabs">${showHist ? `<button class="tab${openDetails.has(hk) ? ' on' : ''}" data-k="${U.esc(hk)}">History</button>` : ''}<button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${U.esc(ek)}">Data-Driven Strategic Evidence</button></div>
+      <div class="pk-panel">${showHist && openDetails.has(hk) ? `<div class="histbox">${histHTML(p)}</div>` : ''}${openDetails.has(ek) ? evidenceHTML(p, g) : ''}</div>
     </article>`;
   }
+  function evidenceHTML(p, g) { const ev = PICKS.evidence(p, g); return `<ul class="evs">${ev.sections.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul>`; }
 
   // ---------- Section 2: parlays ----------
-  function parlayHTML(c, idx) {
-    const id = 'px-' + c.legs.map((l) => l.p.id).join('|').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
-    const legs = c.legs.map((l, i) => { const [who, sel] = heading(l.p, l.g); return `<li><label>Leg ${i + 1}</label><span>${U.esc(who)} — ${U.esc(sel)} <em>(${l.g.away.abbr}@${l.g.home.abbr}, ${l.p.book ? PICKS.fmtAm(l.p.am) : '$' + l.p.price.toFixed(2)}, true ${P2(l.p.fair)})</em></span></li>`; }).join('');
-    const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
-    const rep = PARLAY.report(c);
-    return `<article class="pick rep parlay" id="${id}">
-      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span>
-        <span class="pk-t"><b>${c.legs.length}-Leg Optimal High-Profitability Parlay</b><small>Cumulative Edge Score: ${(c.edge * 100).toFixed(2)}</small></span></div>
-      <ul class="facts">${legs}
-        <li><label>Combined Market Odds (legs at current asks)</label><b>${PARLAY.toAm(c.mkt)}</b></li>
-        <li><label>Market Implied Combined Parlay Probability</label><b>${P2(c.mkt)}</b></li>
-        <li><label>Algorithmic True Combined Parlay Probability</label><b>${P2(c.trueP)}</b></li>
-        <li><label>Net Mathematical Compound Edge</label><b class="pos">${U.signed(c.edge * 100, 2)}%</b></li>
-        <li><label>Volumetric Allocation Scale (0-10)</label><b>${c.scale.toFixed(1)}</b><small>¼-Kelly × ${c.legs.length === 3 ? '0.70' : '0.85'} = ${(c.kelly * 100).toFixed(2)}% of bankroll</small></li>
-      </ul>
-      <div class="entry"><div class="eb"><i class="g" style="width:${pos(c.buyMax)}"></i><i class="y" style="left:${pos(c.buyMax)};width:${U.clamp((c.fairMax - c.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(c.fairMax)}"></i><b class="now" style="left:${pos(c.mkt)}"></b></div>
-        <div class="el"><span>BUY TICKET ZONE: ${PARLAY.toAm(c.buyMax)} or longer (≤ $${c.buyMax.toFixed(3)}/$1)</span><span>FAIR VALUE: ${PARLAY.toAm(c.fairMax)} to ${PARLAY.toAm(c.buyMax)}</span><span class="bad">DO NOT BUY: shorter than ${PARLAY.toAm(c.fairMax)}</span></div></div>
-      <details${openDetails.has(id) ? ' open' : ''}><summary>Mathematical Synergy &amp; Correlation Analysis</summary><ul class="evs">${rep.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
+  function parlayHTML(c) {
+    const id = 'px-' + U.hash(c.legs.map((l) => l.p.id).join('|')).toString(36);
+    const legs = c.legs.map((l, i) => { const [who, sel] = heading(l.p, l.g); return `<li><b>${i + 1}</b><span>${U.esc(who)} — ${U.esc(sel)}</span><em>${c0(l.p.implied)}</em></li>`; }).join('');
+    const ek = id + ':ev';
+    return `<article class="pick parlay" id="${id}" data-id="${id}">
+      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span><span class="pk-t"><b>${c.legs.length}-Leg Optimal Parlay</b><small>Cumulative Edge Score ${(c.edge * 100).toFixed(2)}</small></span></div>
+      <ol class="plegs">${legs}</ol>
+      ${statRow([['Kalshi Ask', c1(c.mkt)], ['True Probability', P2(c.trueP)], ['Mathematical Edge', U.signed(c.edge * 100, 2) + '%', 'pos'], ['1/4-Kelly % of bankroll', kellyPct(c.kelly)]])}
+      ${bracket(c.buyMax, c.fairMax, c.mkt, c1)}
+      <div class="pk-tabs"><button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${ek}">Mathematical Synergy &amp; Correlation Analysis</button></div>
+      <div class="pk-panel">${openDetails.has(ek) ? `<ul class="evs">${PARLAY.report(c).map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul>` : ''}</div>
     </article>`;
   }
   function parlaysHTML(res, empty) {
     if (!res.two.length && !res.three.length) return `<p class="muted small">${empty}</p>`;
     return (res.two.length ? `<h4 class="subh">2-leg</h4>` + res.two.map(parlayHTML).join('') : '') + (res.three.length ? `<h4 class="subh">3-leg</h4>` + res.three.map(parlayHTML).join('') : '');
+  }
+
+  // ---------- Verified roster / injury status (once per game) ----------
+  function rosterHTML(g) {
+    const rec = INTEL.get(g.id);
+    if (!rec || !INTEL.reportLoaded(rec)) return '<p class="muted small">Game-day injury report not loaded yet — every pick for this game is held until it is (Phase 1).</p>';
+    const col = (side) => {
+      const l = INTEL.injuriesFor(rec, g, side);
+      const bench = [...rec.players.values()].filter((x) => x.side === side && x.st?.code === 'CONFLICT');
+      const nws = (rec.news?.[side] || []).filter((a) => a.at && g.date - a.at < 48 * 3600e3 && /restriction|limit|start|bench|ruled out|will not play|won't play|sidelined|will miss|questionable|probable|return/i.test(a.head + ' ' + a.desc)).slice(0, 3);
+      return `<div class="rcol"><h4>${teamSwatch(g[side])}${U.esc(g[side].abbr)}</h4>${l.length ? `<ul>${l.map((x) => `<li><b class="${/OUT|DOUBT/.test(x.code) ? 'out' : 'q'}">${U.esc(x.code)}</b>${U.esc(x.name)}${x.detail ? ` <small>${U.esc(x.detail)}</small>` : ''}</li>`).join('')}</ul>` : '<p class="small">No designations — full roster active.</p>'}${bench.length ? `<p class="small warn">Props benched (source conflict): ${bench.map((x) => U.esc(x.name)).join(', ')}</p>` : ''}${nws.length ? `<ul class="news">${nws.map((a) => `<li>${U.esc(a.head)} <small>${U.ago(a.at)}</small></li>`).join('')}</ul>` : ''}</div>`;
+    };
+    return `<div class="rcols">${col('away')}${col('home')}</div><p class="muted small">Source: official game-day injury report, pulled ${U.ago(rec.sumAt)}. Players not listed are fully active; anyone in tonight's live box score is active. QUESTIONABLE props carry an 18% DNP discount.</p>`;
   }
 
   function renderFeed(g) {
@@ -459,25 +523,34 @@ const UI = (() => {
       const rej = ev ? filtered((ev.picks || []).filter((p) => !p.survivor)) : [];
       const ms = ev && !F.playable ? filtered(ev.models || []) : [];
       const au = ev?.audit;
-      $('#fCount').textContent = ev ? `${au.survived} survived of ${au.priced + au.roster} priced` : '';
-      $('#fUpd').textContent = ev ? 'updated ' + U.ago(ev.at) : '';
-      const pend = ev?.pending?.length || 0;
-      const rec = INTEL.get(g.id);
-      let html = kalshiNote(g);
-      if (au) html += `<p class="audit">Stress-test matrix: ${au.priced + au.roster} priced assets → <b>${au.survived} survived</b> · rejected: edge &lt; +4.00% ${au.edge} · true probability &lt; 30% ${au.floor} · trend sanitized ${au.trend} · roster unverified/OUT ${au.roster}. Sorted by net edge, highest first.</p>`;
-      if (surv.length) html += surv.slice(0, 40).map((p) => pickHTML(p, g)).join('');
-      else html += `<p class="muted">${!rec || !INTEL.reportLoaded(rec) ? 'Holding all picks until the game-day injury report is loaded (Phase 1).' : g.state === 'post' ? 'This game is final.' : 'Zero assets cleared every stress test at current prices.'}</p>`;
-      if (pend) html += `<p class="muted small">${pend} prop markets waiting on game logs.</p>`;
-      if (rej.length && !F.playable) html += `<details class="rejbox"><summary>Discarded by stress tests (${rej.length})</summary>${rej.slice(0, 25).map((p) => { const [w, sl] = heading(p, g); return `<div class="rejrow"><b>${U.esc(w)} — ${U.esc(sl)}</b><span>implied ${P2(p.implied)} · true ${P2(p.fair)} · ${U.esc(p.reason)}</span></div>`; }).join('')}</details>`;
-      if (ms.length) html += `<details class="rejbox"><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>` + ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') + `</details>`;
-      $('#fParlays').innerHTML = parlaysHTML(PARLAY.build((ev?.survivors || []).map((p) => ({ p, g })), { pool: 12, max: 5 }), 'No 2- or 3-leg combination from this game clears +4.00% compound edge with non-negative correlation.');
-      $('#fList').innerHTML = html;
+      $('#fCount').textContent = ev ? `${surv.length} survived · ${au.priced + au.roster} priced` : '';
+      $('#fUpd').textContent = ev ? `${surv.length} survived` : '';
+      const rh = rosterHTML(g); const rEl = $('#fRoster'); if (rEl._h !== rh) { rEl.innerHTML = rh; rEl._h = rh; }
+      const set = (sel, html) => { const x = $(sel); if (x._h !== html) { x.innerHTML = html; x._h = html; } };
+      if ($('#fSec1').open) {
+        const pend = ev?.pending?.length || 0;
+        const rec = INTEL.get(g.id);
+        let html = kalshiNote(g);
+        if (au) html += `<p class="audit"><b>${surv.length} survived</b> of ${au.priced + au.roster} · rejected: edge &lt; +4% ${au.edge} · true &lt; 30% ${au.floor} · trend ${au.trend} · roster ${au.roster}</p>`;
+        if (surv.length) html += surv.slice(0, 40).map((p) => pickHTML(p, g)).join('');
+        else html += `<p class="muted small">${!rec || !INTEL.reportLoaded(rec) ? 'Holding all picks until the game-day injury report is loaded (Phase 1).' : g.state === 'post' ? 'This game is final.' : 'Zero assets cleared every stress test at current prices.'}</p>`;
+        if (pend) html += `<p class="muted small">${pend} prop markets waiting on game logs.</p>`;
+        if (rej.length && !F.playable) html += `<details class="rejbox" data-k="rej"${openDetails.has('rej') ? ' open' : ''}><summary>Discarded by stress tests (${rej.length})</summary>${openDetails.has('rej') ? rej.slice(0, 25).map((p) => { const [w, sl] = heading(p, g); return `<div class="rejrow"><b>${U.esc(w)} — ${U.esc(sl)}</b><span>${p.price != null ? c0(p.price) : '—'} · true ${P2(p.fair)} · ${U.esc(p.reason)}</span></div>`; }).join('') : ''}</details>`;
+        if (ms.length) html += `<details class="rejbox" data-k="unpriced"${openDetails.has('unpriced') ? ' open' : ''}><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>${openDetails.has('unpriced') ? ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') : ''}</details>`;
+        set('#fList', html);
+      }
+      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p))).map((p) => ({ p, g }));
+      if ($('#fSec2').open) {
+        const pr = PARLAY.build(pool, { pool: 12, max: 5 });
+        $('#fParN').textContent = `${pr.two.length + pr.three.length} tickets`;
+        set('#fParlays', parlaysHTML(pr, 'No 2- or 3-leg combination from this game clears +4.00% compound edge with non-negative correlation.'));
+      }
       const bl = buyLists([g]);
-      $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} to buy at current prices` : 'nothing to buy right now';
-      $('#fBuy').innerHTML = buyHTML(bl, 6, KALSHI.hasGame(g.kkey) ? 'No Kalshi price for this game is under the max entry right now.' : 'No Kalshi prices for this game yet.');
-      renderFeed(g);
-      $('#fBoard').innerHTML = boardHTML(g);
-      $('#fIntel').innerHTML = intelHTML(g);
+      $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} in buy zone` : 'none in buy zone';
+      if ($('#fBuyBox').open) set('#fBuy', buyHTML(bl, 8, KALSHI.hasGame(g.kkey) ? 'Zero contracts inside a buy zone at current prices.' : 'No Kalshi prices for this game yet.'));
+      if ($('#fFeedBox').open) renderFeed(g);
+      if ($('#fBoardBox').open) set('#fBoard', boardHTML(g));
+      if ($('#fIntelBox').open) set('#fIntel', intelHTML(g));
     }
     if (force || (now - lastChartRender > 4000 && !busy())) {
       lastChartRender = now;
@@ -499,7 +572,7 @@ const UI = (() => {
     $('#dates').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) APP.setDate(b.dataset.k); };
     $('#games').onclick = (e) => { const c = e.target.closest('.gcard'); if (c) location.hash = 'game-' + c.dataset.id; };
     $('#games').onkeydown = (e) => { if (e.key === 'Enter') { const c = e.target.closest('.gcard'); if (c) location.hash = 'game-' + c.dataset.id; } };
-    $('#ticker').onclick = (e) => { const b = e.target.closest('[data-game]'); if (!b) return; location.hash = 'game-' + b.dataset.game; setTimeout(() => { const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ block: 'center' }); t.classList.add('flash'); } }, 600); };
+    if ($('#ticker')) $('#ticker').onclick = (e) => { const b = e.target.closest('[data-game]'); if (!b) return; location.hash = 'game-' + b.dataset.game; setTimeout(() => { const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ block: 'center' }); t.classList.add('flash'); } }, 600); };
     $('#btnSettings').onclick = () => { const s = $('#settings'); s.hidden = !s.hidden; if (!s.hidden) $('#proxyIn').value = NET.getProxy(); };
     $('#setClose').onclick = () => ($('#settings').hidden = true);
     $('#proxySave').onclick = () => { NET.setProxy($('#proxyIn').value.trim()); $('#settings').hidden = true; APP.restart(); };

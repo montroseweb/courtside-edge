@@ -71,6 +71,10 @@ const INTEL = (() => {
   }
   function possModel(g) {
     const h = teamMetrics(g.home.id), a = teamMetrics(g.away.id), lp = lgPace();
+    // home team's pace in home games and away team's pace on the road (scouted box scores), shrunk by games
+    const vh = SCOUT.venuePace(g.home.id, true), va = SCOUT.venuePace(g.away.id, false);
+    if (vh) { h.seasonPace = h.pace; h.pace = (h.pace * 4 + vh.pace * vh.n) / (4 + vh.n); h.venue = vh; }
+    if (va) { a.seasonPace = a.pace; a.pace = (a.pace * 4 + va.pace * va.n) / (4 + va.n); a.venue = va; }
     const lgRtg = (STATE.standings?.lgPts || 114.5) / lp * 100;
     return { poss: h.pace * a.pace / lp, paceH: h.pace, paceA: a.pace, lgPace: lp, lgRtg, h, a, src: h.src };
   }
@@ -99,7 +103,7 @@ const INTEL = (() => {
     let rec = C.get(g.id);
     if (!rec) { rec = { id: g.id, summary: null, sumAt: 0, rosters: { home: [], away: [] }, players: new Map(), projAt: 0, loading: false, err: '' }; C.set(g.id, rec); }
     const live = g.state === 'in';
-    const sumTTL = live ? (opts.focus ? 12000 : 45000) : 180000;
+    const sumTTL = live ? (opts.focus ? (opts.fast ? 4500 : 12000) : 45000) : 180000;
     const tasks = [];
     if (Date.now() - rec.sumAt > sumTTL) {
       rec.sumAt = Date.now();
@@ -107,14 +111,45 @@ const INTEL = (() => {
     }
     tasks.push(standings());
     tasks.push(teamPace(g.home.id), teamPace(g.away.id));
+    if (opts.focus) tasks.push(news(rec, g));
     if (!rec.rosters.home.length) tasks.push(roster(g.home.id).then((r) => (rec.rosters.home = r)));
     if (!rec.rosters.away.length) tasks.push(roster(g.away.id).then((r) => (rec.rosters.away = r)));
     await Promise.all(tasks);
+    if (opts.focus && rec.summary && !rec.scoutP) {
+      rec.scoutP = Promise.all(['home', 'away'].map((side) => SCOUT.load(g[side].id, rec.summary.lastFive?.[g[side].id]).catch(() => null)))
+        .then((r) => { rec.scout = r; if (rec.players.size) project(g, rec); });
+    }
     if (opts.props && !rec.loading) {
       rec.loading = true;
       try { await loadPlayers(g, rec); } finally { rec.loading = false; }
     }
     return rec;
+  }
+
+  // ---------- ESPN team news (last 48h): minute limits, starting-role changes, "ruled out" reports ----------
+  async function news(rec, g) {
+    if (rec.newsAt && Date.now() - rec.newsAt < 10 * 60e3) return;
+    rec.newsAt = Date.now();
+    const out = {};
+    await Promise.all(['home', 'away'].map(async (side) => { out[side] = await ESPN.news(g[side].id).catch(() => []); }));
+    rec.news = out;
+  }
+  function newsFlags(rec, g, side, espnId, name) {
+    const f = { items: [] };
+    const last = String(name || '').split(' ').slice(-1)[0];
+    for (const a of rec?.news?.[side] || []) {
+      if (!a.at || g.date - a.at > 48 * 3600e3 || a.at - g.date > 6 * 3600e3) continue;
+      const t = (a.head + '. ' + a.desc);
+      const about = a.ids.includes(espnId) || (last.length > 2 && new RegExp('\\b' + last.replace(/[^A-Za-z'-]/g, '') + '\\b', 'i').test(t) && U.nameScore(name, (t.match(new RegExp('([A-Z][\\w.\'-]+\\s+)?' + last.replace(/[^A-Za-z'-]/g, ''))) || [''])[0]) >= 0.6);
+      if (!about) continue;
+      const lt = t.toLowerCase();
+      const hit = (re) => re.test(lt);
+      if (hit(/minutes? restriction|minutes limit|limited minutes|minutes cap|on a minutes|pitch count|ease (him )?back/)) { f.restrict = true; const m = lt.match(/(\d{2})\s*(?:-|to)?\s*(?:\d{2})?\s*minutes/); if (m) f.cap = +m[1]; f.items.push(a); }
+      else if (hit(/ruled out|will not play|won't play|out (?:for|tonight)|sidelined|will miss|did not travel/)) { f.out = true; f.items.push(a); }
+      else if (hit(/(?:will|to|set to|expected to|slated to) start|starting lineup|draw the start|get the start|enter the starting/)) { f.start = true; f.items.push(a); }
+      else if (hit(/(?:move|moved|moving|coming|come) (?:off|to) the bench|bench role|reserve role/)) { f.bench = true; f.items.push(a); }
+    }
+    return f;
   }
 
   // ---------- Phase 1: roster/injury verification (official game report only) ----------
@@ -139,6 +174,8 @@ const INTEL = (() => {
     if (!reportLoaded(rec)) return { code: 'UNVERIFIED', ok: false, src: 'game-day injury report not loaded yet' };
     const r = injuriesFor(rec, g, side).find((x) => x.espnId === espnId || U.nameScore(x.name, name) >= 0.95);
     if (r) return { code: r.code, ok: !/OUT|DOUBTFUL|LISTED/.test(r.code), src: 'official game-day injury report', raw: r.status, detail: r.detail };
+    const nf = newsFlags(rec, g, side, espnId, name);
+    if (nf.out) return { code: 'CONFLICT', ok: false, src: `ESPN news ("${nf.items[0]?.head.slice(0, 70)}") reports him out but the game report does not — props benched` };
     const ro = (rec.rosters[side] || []).find((x) => x.espnId === espnId);
     if (ro?.inj && /out|doubt/i.test(ro.inj)) return { code: 'CONFLICT', ok: false, src: `roster feed says "${ro.inj}" but the game report does not list him — props benched` };
     return { code: 'ACTIVE', ok: true, src: 'not on the game-day injury report' };
@@ -236,14 +273,21 @@ const INTEL = (() => {
       const defF = U.clamp(oppM.drtg / pm.lgRtg, 0.9, 1.1);
       const marketF = hasMkt ? U.clamp(impliedPts / avg, 0.85, 1.15) : null;
       const st = statusFor(rec, g, side, id, p.name);
-      const ctx = { season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
+      const scoutF = SCOUT.factors(p, team.id, opp.id);
+      const nws = newsFlags(rec, g, side, id, p.name);
+      const ctx = { scoutF, news: nws, defenderF: p.ctx?.defenderF ?? 1, defenderZ: p.ctx?.defenderZ, season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
       p.ctx = ctx;
       p.st = st;
       p.status = st.code === 'ACTIVE' ? '' : st.code;
       p.proj = MODEL.projectPlayer(p.logs, ctx);
       p.splits = splits(p.logs, season);
     }
-    // estimated primary defender: same position group on the other team, most projected minutes; per-36 defensive events
+    defenders(g, rec, outs, pm);
+    // second pass: apply the primary-defender factor now that every player has a matchup
+    for (const [, p] of rec.players) if (p.ctx && p.matchup?.f && Math.abs(p.matchup.f - (p.ctx.defenderF ?? 1)) > 1e-4) { p.ctx.defenderF = p.matchup.f; p.ctx.defenderZ = p.matchup.z; p.proj = MODEL.projectPlayer(p.logs, p.ctx); }
+    rec.projAt = Date.now();
+  }
+  function defenders(g, rec, outs, pm) {
     const per36 = (q, k) => { const gm = (q.logs || []).filter((r) => r.min >= 4).slice(0, 20); const m = U.sum(gm.map((r) => r.min)); return m ? U.sum(gm.map((r) => r[k] || 0)) / m * 36 : null; };
     for (const [, p] of rec.players) {
       const grp = posGroup(p.pos);
@@ -253,8 +297,16 @@ const INTEL = (() => {
       const ro = (rec.rosters[oppSide] || []).find((q) => posGroup(q.pos) === grp && !outs[oppSide].some((o) => o.espnId === q.espnId));
       const d = cands[0];
       p.matchup = d ? { name: d.name, pos: d.pos, est: true, min: d.proj.minProj, stl36: per36(d, 'stl'), blk36: per36(d, 'blk'), pf36: per36(d, 'pf'), n: Math.min(20, d.proj.games.length) } : ro ? { name: ro.name, pos: ro.pos, est: true } : null;
+      const m = p.matchup;
+      if (m?.stl36 != null) {
+        // disruption z-score vs position norms; steals/blocks per 100 opponent possessions on the floor
+        const B = { G: [1.25, 0.45, 0.45], F: [1.0, 0.85, 0.5], C: [0.85, 1.7, 0.6] }[grp] || [1, 0.8, 0.5];
+        const z = ((m.stl36 + m.blk36) - (B[0] + B[1])) / B[2];
+        m.z = z; m.f = U.clamp(1 - 0.015 * z, 0.97, 1.02);
+        const poss36 = (pm?.poss || 99.5) * 36 / 48;
+        m.stlPct = m.stl36 / poss36 * 100; m.blkPct = m.blk36 / poss36 * 100;
+      }
     }
-    rec.projAt = Date.now();
   }
 
   function splits(rows, season) {
@@ -273,5 +325,5 @@ const INTEL = (() => {
     };
   }
 
-  return { ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
+  return { newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();

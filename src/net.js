@@ -8,7 +8,7 @@ const NET = (() => {
   const SOURCES = {
     espn: { label: 'ESPN', bases: ['/x/espn', 'https://site.api.espn.com'] },
     espnweb: { label: 'ESPN', bases: ['/x/espnweb', 'https://site.web.api.espn.com'] },
-    nba: { label: 'NBA', bases: ['/x/nba', 'https://cdn.nba.com'] },
+    nba: { label: 'NBA', bases: ['/x/nba', 'https://cdn.nba.com'], noRelay: true },
     kalshi: { label: 'Kalshi', bases: ['/x/kalshi', '/x/kalshi2', 'https://external-api.kalshi.com', 'https://api.elections.kalshi.com'] },
     ghapi: { label: 'GitHub', bases: ['https://api.github.com'], noRelay: true },
     ghraw: { label: 'GitHub', bases: ['https://raw.githubusercontent.com'], noRelay: true },

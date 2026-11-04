@@ -151,7 +151,7 @@ const ESPN = (() => {
     out.lastFive = {};
     for (const t of j.lastFiveGames || []) {
       out.lastFive[String(t.team?.id || '')] = (t.events || []).map((e) => ({
-        result: e.gameResult || '', score: e.score || '', opp: e.opponent?.abbreviation || '', atVs: e.atVs || '', date: Date.parse(e.gameDate) || 0,
+        id: String(e.id || ''), result: e.gameResult || '', score: e.score || '', opp: e.opponent?.abbreviation || '', atVs: e.atVs || '', date: Date.parse(e.gameDate) || 0,
       }));
     }
     // season series
@@ -276,6 +276,7 @@ const ESPN = (() => {
   }
 
   return {
+    news: (teamId) => NET.get('espn', `${P}/news?team=${teamId}&limit=30`).then((j) => (j?.articles || []).map((a) => ({ head: a.headline || '', desc: a.description || '', at: Date.parse(a.published || a.lastModified) || 0, ids: (a.categories || []).filter((c) => c.type === 'athlete' && (c.athleteId || c.athlete?.id)).map((c) => String(c.athleteId || c.athlete?.id)) }))),
     teamStats: (teamId) => NET.get('espn', `${P}/teams/${teamId}/statistics`).then(parseTeamStats),
     scoreboard: (key) => NET.get('espn', `${P}/scoreboard?dates=${key}&limit=50`, { fresh: true, timeout: 6000 }).then(parseScoreboard),
     summary: (id, game) => NET.get('espn', `${P}/summary?event=${id}`, { fresh: true }).then((j) => parseSummary(j, game)),

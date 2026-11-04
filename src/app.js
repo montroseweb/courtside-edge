@@ -185,11 +185,13 @@ const APP = (() => {
     }
     const rec = INTEL.get(g.id);
     const propsWaiting = rec && !rec.loading && rec.players.size === 0 && Date.now() - (g._intelAt || 0) > 5000 && KALSHI.marketsFor(g.kkey).some((m) => m.kind === 'prop');
-    if (!rec || propsWaiting || Date.now() - (g._intelAt || 0) > (live ? 15000 : 90000)) {
+    const espnLive = live && (!g.nbaId || (g._boxFail || 0) > 2); // ESPN is the live box-score source
+    if (!rec || propsWaiting || Date.now() - (g._intelAt || 0) > (live ? (espnLive ? 5000 : 15000) : 90000)) {
       g._intelAt = Date.now();
-      tasks.push(INTEL.ensure(g, { props: true, focus: true }).then((r) => {
+      tasks.push(INTEL.ensure(g, { props: true, focus: true, fast: espnLive }).then((r) => {
         if ((!g.nbaId || (g._boxFail || 0) > 2) && r.summary?.box?.length && g.state !== 'pre') setBox(g, { players: r.summary.box, at: Date.now() }, 'espn');
         if (!g.hasPbp && r.summary?.plays?.length) seedFromEspnPlays(g, r.summary.plays);
+        STATE.liveAt = Date.now();
       }));
     } else if (rec && Date.now() - rec.projAt > 30000) INTEL.project(g, rec);
     await Promise.all(tasks);
@@ -246,7 +248,7 @@ const APP = (() => {
     if (ev.length) { g.events = ev.slice(-200); computeRun(g); }
   }
   function seedFromEspnPlays(g, plays) {
-    if (g._seeded) return; g._seeded = true;
+    if (g._seedN === plays.length) return; g._seedN = plays.length; // refresh as new plays arrive
     const ev = []; let ph = 0, pa = 0; const shots = [];
     for (const p of plays) {
       if (p.hs == null) continue;
@@ -260,7 +262,7 @@ const APP = (() => {
       }
     }
     if (ev.length) { g.events = ev.slice(-200); computeRun(g); }
-    if (shots.length && !g.shots.length) g.shots = shots.slice(-200);
+    if (shots.length) g.shots = shots.slice(-200);
   }
 
   // background: deep data + boxes for games that matter soon, so the ticker can include props
@@ -330,7 +332,8 @@ const APP = (() => {
     UI.renderGames();
     KALSHI.discover().catch(() => { });
     every(() => (anyLive() ? 1000 : 15000), pollScores, gen);
-    every(() => (anyLive() ? 1000 : 30000), () => pollNba().catch(() => { }), gen);
+    // NBA CDN blocks browsers on proxy-less hosts: after repeated failures check only every 2 min (ESPN covers live data)
+    every(() => (NET.health('nba').level === 'down' && NET.state.nba.fail >= 3 ? 120000 : anyLive() ? 1000 : 30000), () => pollNba().catch(() => { }), gen);
     every(250, () => { const f = STATE.focus && STATE.games.get(STATE.focus); KALSHI.tick({ anyLive: anyLive(), soon: soon(), focusKey: f?.kkey, focusLive: f?.state === 'in' }); }, gen);
     every(1000, pollFocus, gen);
     every(3000, background, gen);
@@ -360,6 +363,8 @@ const APP = (() => {
 
   function start() {
     if (running) return; running = true;
+    // installable app: cache the shell for instant launch from the home screen
+    if ('serviceWorker' in navigator && location.protocol === 'https:' && !inArtifact()) navigator.serviceWorker.register('./sw.js').catch(() => { });
     if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U };
     UI.init();
     document.fonts?.ready?.then(() => COURT.invalidate());

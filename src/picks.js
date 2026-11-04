@@ -313,7 +313,11 @@ const PICKS = (() => {
       if (cx.defF) sec.pace.push(`${opp.abbr} allows ${f1(cx.oppDrtg)} pts/100 poss vs league ${f1(cx.lgRtg)} → efficiency ×${f3(cx.defF)} (applied to PTS ×1.0, 3PM ×0.8, AST ×0.5).`);
       if (cx.marketF != null) sec.pace.push(`Market-implied ${team.abbr} total ${f1(cx.impliedPts)} vs ${f1(cx.teamAvgPts)} season avg (×${f3(cx.marketF)}); blended 50/50 → ${S} environment ×${f3(pr.env?.[MODEL.COMBO[st] ? 'pts' : st])}.`);
       if (!ls.pre && ls.elapsed > 2) sec.pace.push(`Live: ${ls.total} pts in ${f1(ls.elapsed)} min = ${f1(ls.total / ls.elapsed * 48)} pts/48 vs pregame total ${f1(g.pre?.total)}; ${f1(ls.rem)} min remaining.`);
-      sec.pace.push(`Home/away pace variance and half-court vs transition splits: ${NA}.`);
+      const vH = pm.h.venue, vA = pm.a.venue;
+      if (vH || vA) sec.pace.push(`Venue pace (scouted box scores): ${g.home.abbr} ${vH ? `${f1(vH.pace)} at home (n=${vH.n})` : 'home split n/a'} vs ${f1(pm.h.seasonPace ?? pm.paceH)} season; ${g.away.abbr} ${vA ? `${f1(vA.pace)} on the road (n=${vA.n})` : 'road split n/a'} vs ${f1(pm.a.seasonPace ?? pm.paceA)} season.`);
+      const sf = cx.scoutF || {};
+      if (sf.trans) sec.pace.push(`Transition: ${team.abbr} ${f1(sf.trans.fbFor)} fast-break pts/g vs ${opp.abbr} allowing ${f1(sf.trans.fbAg)} (league ${SCOUT.LG.fb}) → ×${f3(sf.trans.f)}.${sf.paint ? ` Paint: ${opp.abbr} allows ${f1(sf.paint.ag)} paint pts/g (league ${SCOUT.LG.paint}).` : ''}`);
+      if (!sf.have) sec.pace.push('Opponent scouting (last 4 box scores) loading — venue pace and transition factors pending.');
       // ---- ROTATIONAL & USAGE MATH ----
       if (p.data.live) {
         const lb = p.data.live;
@@ -327,16 +331,22 @@ const PICKS = (() => {
       if (u.all != null) sec.rot.push(`Usage proxy (FGA + 0.44·FTA + TOV)/min: ${f3(u.all)} (L5 ${f3(u.l5)}).`);
       for (const x of u.mates || []) sec.rot.push(`Without ${x.name} (${x.code}, official; ${x.n} games): usage ${f3(x.without)}/min vs ${f3(x.with)} with (${U.signed((x.without / x.with - 1) * 100, 1)}%).`);
       for (const n of pr.notes.filter((n) => n.k === 'inj' || n.k === 'blowout')) sec.rot.push(n.t + '.');
-      sec.rot.push(`Minutes restriction: ${pl.st?.code === 'MINUTES RESTRICTION' ? 'listed on the game report' : 'none listed on the game report'}. Coaching rotation quotes / minute caps: ${NA}.`);
+      for (const n of pr.notes.filter((n) => n.k === 'min')) sec.rot.push(n.t + '.');
+      const nw = cx.news || {};
+      sec.rot.push(`Minutes restriction: ${pl.st?.code === 'MINUTES RESTRICTION' ? 'listed on the game report' : 'none on the game report'}; ESPN team news (48h): ${nw.items?.length ? nw.items.slice(0, 2).map((a) => `"${a.head}"`).join('; ') : 'no minutes, role or availability items'}.`);
       // ---- MATCHUP & DEFENSIVE AUDIT ----
       const d = pl.matchup;
-      if (d) sec.match.push(d.stl36 != null ? `Estimated primary defender ${d.name} (${d.pos || '—'}, ${f1(d.min)} proj min): ${f1(d.stl36)} STL, ${f1(d.blk36)} BLK, ${f1(d.pf36)} PF per 36 over his last ${d.n}.` : `Estimated primary defender ${d.name} (${d.pos || '—'}); defensive logs not loaded.`);
+      if (d) sec.match.push(d.stl36 != null ? `Estimated primary defender ${d.name} (${d.pos || '—'}, ${f1(d.min)} proj min): ${f1(d.stl36)} STL / ${f1(d.blk36)} BLK / ${f1(d.pf36)} PF per 36 (≈${f1(d.stlPct)} steals and ${f1(d.blkPct)} blocks per 100 possessions on the floor, last ${d.n}); disruption z ${U.signed(d.z, 2)} → ×${f3(d.f)} on scoring.` : `Estimated primary defender ${d.name} (${d.pos || '—'}); defensive logs not loaded.`);
       sec.match.push(`${opp.abbr} team defense ${f1(cx.oppDrtg)} pts/100 poss${cx.oppDefRank ? ` (#${cx.oppDefRank} in points allowed)` : ''}.`);
       const h2h = pr.games.filter((r) => r.opp === cx.opp).slice(0, 5);
       if (h2h.length) sec.match.push(`vs ${cx.opp} last ${h2h.length}: ${h2h.map((r) => MODEL.statVal(r, st)).join(', ')} ${S}${prj.h2hF && Math.abs(prj.h2hF - 1) > 0.005 ? ` → ×${f3(prj.h2hF)}` : ' (no adjustment)'}.`);
       const spl = pl.splits, key = ['pts', 'reb', 'ast', 'fg3m'].includes(st) ? st : 'pts';
       if (spl?.topD && spl?.botD) sec.match.push(`vs top-10 defenses ${f1(spl.topD[key])} (n=${spl.topD.n}) / bottom-10 ${f1(spl.botD[key])} (n=${spl.botD.n}) ${MODEL.SHORT[key]}; home ${f1(spl.home?.[key])} / away ${f1(spl.away?.[key])}.`);
-      sec.match.push(`Individual defensive rating, block/steal %, archetype containment, zone and play-type defense: ${NA}.`);
+      const sc = cx.scoutF || {};
+      if (sc.dvp) sec.match.push(`Defense vs ${sc.dvp.G === 'G' ? 'guards' : sc.dvp.G === 'C' ? 'centers' : 'forwards'} (${opp.abbr}, last ${sc.dvp.n}): ${f1(sc.dvp.pts)} pts / ${f1(sc.dvp.reb)} reb / ${f1(sc.dvp.ast)} ast / ${f1(sc.dvp.fg3m)} 3PM allowed per game → PTS ×${f3(Math.sqrt(sc.dvp.f.pts))}, REB ×${f3(Math.sqrt(sc.dvp.f.reb))}, AST ×${f3(Math.sqrt(sc.dvp.f.ast))}.`);
+      if (sc.zone) { const ZN = { rim: 'rim', paint: 'paint', mid: 'mid-range', c3: 'corner 3', ab3: 'above-break 3' }; sec.match.push(`Shot-zone matchup — ${pl.name}'s mix (${sc.zone.nShots >= 15 ? sc.zone.nShots + ' scouted shots' : 'position default'}): ${Object.entries(sc.zone.share).filter(([, v]) => v > 0.04).map(([z, v]) => `${ZN[z]} ${Math.round(v * 100)}%`).join(', ')}; ${opp.abbr} allows ${Object.entries(sc.zone.zd).map(([z, x]) => `${ZN[z]} ${(x.fg * 100).toFixed(1)}%`).join(', ')} (${sc.zone.att} shots) → scoring ×${f3(Math.pow(sc.zone.zoneF, 0.6))}, 3PM ×${f3(sc.zone.threeF)}.`); }
+      if (sc.type) { const TN = { cs: 'catch-and-shoot', od: 'off-dribble (iso / P&R)', drive: 'drives', cut: 'cuts / putbacks', post: 'post-ups' }; sec.match.push(`Shot-type matchup (play-type proxy from play-by-play): ${Object.entries(sc.type.share).filter(([, v]) => v > 0.05).map(([t, v]) => `${TN[t]} ${Math.round(v * 100)}%`).join(', ')}; ${opp.abbr} eFG allowed ${Object.entries(sc.type.td).map(([t, x]) => `${TN[t]} ${(x.efg * 100).toFixed(1)}%`).join(', ')} → ×${f3(Math.sqrt(sc.type.typeF))}.`); }
+      if (!sc.have) sec.match.push('Opponent scouting (defense vs position, shot-zone and shot-type defense) loading from the last 4 box scores.');
     } else {
       // ---- game lines ----
       const pre = g.pre?.src || {}, fp = p.data.fp;
@@ -364,7 +374,9 @@ const PICKS = (() => {
       sec.match.push(`Per 100 possessions — ${g.away.abbr} O ${f1(a.ortg)} / D ${f1(a.drtg)}${a.defRank ? ` (#${a.offRank}/#${a.defRank})` : ''}; ${g.home.abbr} O ${f1(h.ortg)} / D ${f1(h.drtg)}${h.defRank ? ` (#${h.offRank}/#${h.defRank})` : ''}; league ${f1(pm.lgRtg)}.`);
       const ser = rec?.summary?.series;
       if (ser?.events?.length) sec.match.push(`Season series: ${ser.events.map((e) => `${e.away} ${e.as}–${e.hs} ${e.home}`).join(', ')}.`);
-      sec.match.push(`Zone and play-type team defense: ${NA}.`);
+      const sH = SCOUT.get(g.home.id), sA = SCOUT.get(g.away.id);
+      if (sH && sA) sec.match.push(`Transition: ${g.away.abbr} ${f1(sA.fbFor)} / ${g.home.abbr} ${f1(sH.fbFor)} fast-break pts/g; allowed ${f1(sA.fbAg)} / ${f1(sH.fbAg)}. Paint pts allowed ${f1(sA.paintAg)} / ${f1(sH.paintAg)} (last ${Math.min(sA.n, sH.n)} games).`);
+      if (pm.h.venue || pm.a.venue) sec.pace.push(`Venue pace: ${g.home.abbr} ${pm.h.venue ? f1(pm.h.venue.pace) + ' at home' : 'n/a'}, ${g.away.abbr} ${pm.a.venue ? f1(pm.a.venue.pace) + ' on the road' : 'n/a'} (scouted box scores).`);
     }
     return {
       status: statusLine(p, g),

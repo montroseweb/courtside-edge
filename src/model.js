@@ -230,6 +230,26 @@ const MODEL = (() => {
     const last5 = games.slice(0, 5);
     let minProj = 0.6 * U.wmean(games.map((r) => r.min), w) + 0.4 * U.mean(last5.map((r) => r.min));
     const minBase = minProj;
+    // minutes intelligence: ramp after an absence, sustained role change, news-reported limits / role
+    const curG = games.filter((r) => r.season === ctx.season);
+    for (let i = 0; i < Math.min(curG.length - 1, 4); i++) {
+      const gap = (curG[i].date - curG[i + 1].date) / 864e5;
+      if (gap >= 7) {
+        const since = curG.slice(0, i + 1), before = games.slice(i + 1, i + 11);
+        const ms = U.mean(since.map((r) => r.min)), mb = U.mean(before.map((r) => r.min));
+        if (isFinite(ms) && isFinite(mb) && ms < 0.85 * mb) { const cap = ms * 1.08; if (minProj > cap) { notes.push({ k: 'min', t: `Minutes ramp: ${Math.round(gap)}-day absence, ${since.length} game${since.length > 1 ? 's' : ''} back at ${ms.toFixed(1)} min vs ${mb.toFixed(1)} before → capped at ${cap.toFixed(1)}` }); minProj = cap; } }
+        break;
+      }
+    }
+    if (games.length >= 8) {
+      const l3 = U.mean(games.slice(0, 3).map((r) => r.min)), l15 = U.mean(games.slice(3, 18).map((r) => r.min));
+      if (l15 > 0 && Math.abs(l3 / l15 - 1) > 0.15 && games.slice(0, 3).every((r) => Math.sign(r.min - l15) === Math.sign(l3 - l15))) { const was = minProj; minProj = 0.6 * l3 + 0.4 * minProj; notes.push({ k: 'min', t: `Role change: last 3 games ${l3.toFixed(1)} min vs ${l15.toFixed(1)} prior (all 3 same direction) → ${was.toFixed(1)} → ${minProj.toFixed(1)}` }); }
+    }
+    const nw = ctx.news || {};
+    if (nw.cap && minProj > nw.cap) { notes.push({ k: 'min', t: `News: minutes limit ~${nw.cap} ("${nw.items[0]?.head.slice(0, 60)}")` }); minProj = nw.cap; }
+    else if (nw.restrict) { minProj *= 0.8; notes.push({ k: 'min', t: `News: minutes restriction reported ("${nw.items[0]?.head.slice(0, 60)}") → ×0.80` }); }
+    if (nw.start && minProj < 28) { minProj *= 1.12; notes.push({ k: 'min', t: `News: moving into the starting lineup ("${nw.items[0]?.head.slice(0, 60)}") → ×1.12` }); }
+    if (nw.bench && minProj > 24) { minProj *= 0.88; notes.push({ k: 'min', t: `News: moving to a bench role → ×0.88` }); }
     const fat = ctx.fat || { minF: 1, effF: 1, flags: [] };
     if (fat.minF !== 1) minProj *= fat.minF;
     // usage proxy per minute: (FGA + 0.44·FTA + TOV) / MIN
@@ -306,6 +326,8 @@ const MODEL = (() => {
         mu = rate * minProj;
         mu *= envFor(s);
         mu *= Math.pow(fat.effF ?? 1, EFF_EXP[s] ?? 0);
+        mu *= ctx.scoutF?.[s] ?? 1;                       // defense vs position, shot zones/types, transition
+        if (s === 'pts' || s === 'fg3m') mu *= ctx.defenderF ?? 1; // primary defender disruption
         mu *= mateFx[s] || 1;
       }
       // head-to-head
