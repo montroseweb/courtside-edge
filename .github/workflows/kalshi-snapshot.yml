@@ -10,13 +10,14 @@ on:
     paths: ['.github/workflows/kalshi-snapshot.yml', 'tools/kalshi-snapshot.js']
 permissions:
   contents: write
+  actions: write   # lets the job start its own successor (GITHUB_TOKEN may dispatch workflow runs)
 concurrency:
   group: kalshi-snapshot
-  cancel-in-progress: true   # each new run (every 30 min) replaces the previous one
+  cancel-in-progress: false  # new runs wait for the running one (no mid-run cancels, no restart loops)
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,5 +26,11 @@ jobs:
       - run: node tools/kalshi-snapshot.js
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_MINUTES: '45'
+          RUN_MINUTES: '340'
           EVERY_SECONDS: '55'
+      # hand over to a fresh run so the feed never goes quiet (scheduled runs are only a backup)
+      - if: ${{ !cancelled() }}
+        run: gh workflow run kalshi-snapshot.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

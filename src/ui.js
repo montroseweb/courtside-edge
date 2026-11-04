@@ -19,6 +19,7 @@ const UI = (() => {
   function kalshiNote(g) {
     const st = KALSHI.status(), h = NET.health('kalshi');
     if (NET.isDemo()) return '';
+    if (KALSHI.hasGame(g.kkey) && st.snapMode && Date.now() - st.snapAt > 10 * 60e3) return `<div class="knote bad"><b>Kalshi feed is ${U.ago(st.snapAt).replace(' ago', '')} old — no picks are cleared on stale prices.</b> The feed job restarts automatically; for direct second-by-second prices deploy the Vercel copy. <a class="gel primary" href="${DEPLOY}" target="_blank" rel="noopener">Deploy on Vercel</a></div>`;
     if (KALSHI.hasGame(g.kkey)) return st.snapMode ? `<div class="knote ok"><b>Real Kalshi prices via the published feed</b> — updated ${U.ago(st.snapAt)} (refreshes about every minute). Your browser can't reach Kalshi directly from this host, so confirm the live price before entering. For second-by-second prices, use the Vercel copy. <a class="gel" href="${DEPLOY}" target="_blank" rel="noopener">Deploy on Vercel</a></div>` : '';
     const routes = NET.routes('kalshi').map((r) => `${U.esc(r.host)} (${r.kind}): ${U.esc(r.result)}`).join(' · ');
     if (st.reached || st.ok) {
