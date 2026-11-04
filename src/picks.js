@@ -118,7 +118,7 @@ const PICKS = (() => {
         const lbz = labels(m, g, best.yes);
         out.push({
           id: m.ticker + (best.yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind: 'prop', stat, side: best.yes ? 'YES' : 'NO', label: lbz.t, sub: lbz.s,
-          price: null, fair, cost: null, edge: null, lean: Math.abs(best.lean), roi: null, be: U.breakEven(fair), maxEntry: U.breakEven(Math.max(0, fair - safety)), greatEntry: U.breakEven(Math.max(0, fair - safety - 0.06)),
+          price: null, fair, cost: null, edge: null, netEdge: null, lean: Math.abs(best.lean), roi: null, be: U.breakEven(fair), fairMax: U.breakEven(fair), maxEntry: Math.min(Math.max(0, fair - 0.04), U.breakEven(Math.max(0, fair - safety))), buyMax: Math.min(Math.max(0, fair - 0.04), U.breakEven(Math.max(0, fair - safety))), greatEntry: U.breakEven(Math.max(0, fair - safety - 0.06)), scale: 0,
           kelly: 0, unc, safety, rating, tier, playable: false, modelOnly: true, lag: null, live: !ls.pre, liq: { spread: null, vol: 0, oi: 0 }, m,
           data: { player: pl, live: lb, fp: { ...best.fp, base: best.base, liveBase: !!lb } }, yes: best.yes,
         });
@@ -134,7 +134,7 @@ const PICKS = (() => {
     const mk = [...kmk, ...bookMarkets(g, kmk, ls)];
     const ctx = { ls, sEff: g.sEff ?? g.pre?.spread ?? 2, tEff: g.tEff ?? g.pre?.total ?? 229 };
     const now = Date.now();
-    const out = [], pending = [];
+    const out = [], pending = [], rejected = [];
     for (const m of mk) {
       if (m.yesAsk == null && m.noAsk == null) continue;
       let fp = null, kind = m.kind, why = [], data = {}, unc;
@@ -144,15 +144,19 @@ const PICKS = (() => {
         if (!p && m.player) { const hit = [...rec.players.values()].find((x) => U.nameScore(x.name, m.player) >= 0.8); if (hit) { p = hit; m.espnId = hit.espnId; } }
         if (!p?.proj) { pending.push(m); continue; }
         const lb = !ls.pre ? liveBoxFor(g, rec, p.espnId, p.name) : null;
+        if (!(lb && (lb.min > 0 || lb.played)) && !p.st?.ok) { rejected.push({ m, reason: `ROSTER: ${p.st?.code || 'UNVERIFIED'}` }); continue; }
         if (!lb && !ls.pre && !ls.post) { pending.push(m); continue; } // waiting on the live box score
         if (lb && !ls.post) fp = MODEL.propLiveProb(p.proj, m.stat, m.th, lb, ls);
         else if (ls.pre) fp = MODEL.propPregameProb(p.proj, m.stat, m.th);
         if (!fp) continue;
         if (fp.hit) continue;
         const nEff = p.proj.nEff;
-        unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (/question|doubt|day/i.test(p.status) ? 0.05 : 0);
-        data = { player: p, live: lb, fp };
+        const playP = lb ? 1 : (INTEL.PLAY_P[p.st?.code] ?? 1); // own DNP risk (QUESTIONABLE 0.82, PROBABLE 0.97)
+        if (playP < 1) fp = { ...fp, p: fp.p * playP };
+        unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (playP < 1 ? 0.03 : 0);
+        data = { player: p, live: lb, fp, playP };
       } else if (['ml', 'spread', 'total', 'teamtotal', 'margin', 'ot'].includes(m.kind)) {
+        if (!INTEL.reportLoaded(rec)) { rejected.push({ m, reason: 'ROSTER: game-day injury report not loaded' }); continue; }
         fp = MODEL.lineProb(m, g, ctx);
         if (!fp) continue;
         unc = (ls.pre ? 0.02 : 0.025) + (m.seg ? 0.01 : 0);
@@ -189,34 +193,47 @@ const PICKS = (() => {
       fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
       data.fp = fp;
 
+      // trend sanitization inputs (props): hit history at this threshold vs the context-adjusted projection
+      let trend = null;
+      if (m.kind === 'prop' && m.th?.k != null && !data.live) {
+        const pr = data.player.proj, hh = MODEL.hitHistory(pr.games, m.stat, m.th.k, data.player.ctx.season);
+        const muAdj = pr.proj[m.stat]?.mu;
+        if (hh && muAdj != null) trend = { hh, muAdj, l10: hh.l10.n ? hh.l10.h / hh.l10.n : 0, regress: isFinite(hh.avg10) && muAdj < hh.avg10 * 0.95 };
+      }
       for (const yes of [true, false]) {
         if (m.kind === 'prop' && (!yes || m.th?.op === '<')) continue; // player props: overs only (buy YES on "X+")
         const price = yes ? m.yesAsk : m.noAsk;
         if (price == null || price <= 0.02 || price >= 0.96) continue; // no value in 97¢+ contracts
-        const fair = yes ? fp.p : 1 - fp.p;
-        const cost = price + (m.book ? 0 : U.fee(price)); // sportsbook prices already include the vig
-        const edge = fair - cost;
+        const fair = yes ? fp.p : 1 - fp.p;                 // algorithmic true winning probability
+        const implied = price;                               // market implied winning probability (ask / book price)
+        const netEdge = fair - implied;
+        const fee = m.book ? 0 : U.fee(price);               // sportsbook prices already include the vig
+        const cost = price + fee, ev = fair - cost, roi = ev / cost;
         const safety = unc * 0.8 + 0.005;
         const BE = m.book ? (x) => U.clamp(x, 0, 1) : U.breakEven;
-        const be = BE(fair), maxEntry = BE(Math.max(0, fair - safety)), greatEntry = BE(Math.max(0, fair - safety - 0.06));
-        const roi = edge / cost;
-        const kelly = edge > 0 ? Math.max(0, (fair - cost) / (1 - cost)) * 0.25 : 0;
+        const fairMax = BE(fair);                            // above this: negative EV after fees
+        const buyMax = Math.min(Math.max(0, fair - 0.04), BE(Math.max(0, fair - safety))); // ≥4.00 pts edge and model-error margin
+        const kellyFull = ev > 0 ? ev / (1 - cost) : 0;
+        const scale = Math.round(U.clamp((kellyFull * 0.25) / 0.03 * 10 * (1 - Math.min(0.5, unc * 3)), 0, 10) * 10) / 10;
+        // ---- Phase 2 gates ----
+        let reason = null;
+        if (netEdge < 0.04 || ev <= 0) reason = `EDGE ${U.signed(netEdge * 100, 2)}% < +4.00% minimum`;
+        else if (fair < 0.30 && !(netEdge >= 0.10 && roi >= 0.6)) reason = `TRUE PROBABILITY ${(fair * 100).toFixed(2)}% < 30.00% floor`;
+        else if (trend && trend.l10 >= 0.7 && trend.regress) reason = `TREND SANITIZED: L10 ${trend.hh.l10.h}/${trend.hh.l10.n} but projection ${trend.muAdj.toFixed(1)} < 95% of L10 avg ${trend.hh.avg10.toFixed(1)}`;
         const spreadW = m.book ? 0.04 : m.yesAsk != null && m.yesBid != null ? m.yesAsk - m.yesBid : 0.1;
-        // raw score: edge beyond the safety margin (in 5¢ units) + confidence + data/liquidity quality
-        let raw = 62 + 14 * ((edge - safety) / 0.05) + 10 * (fair - 0.5);
+        let raw = 62 + 14 * ((netEdge - Math.max(0.04, safety)) / 0.05) + 10 * (fair - 0.5);
         if (data.player) raw += data.player.proj.nEff >= 15 ? 3 : data.player.proj.nEff < 6 ? -6 : 0;
         if (spreadW > 0.06) raw -= 6; if (m.vol < 50) raw -= 4;
         if (lag && Math.sign(move) === (yes ? 1 : -1)) raw += 4;
-        if (fair < 0.12) raw -= 8; // long shots need more proof
-        if (Math.abs(gap) > 0.25) raw -= 8; // huge model/market gaps usually mean missing news
-        // diminishing returns toward 99
-        let rating = Math.round(U.clamp(40 + 59 * (1 - Math.exp(-Math.max(0, raw - 40) / 30)), 30, 99));
+        if (Math.abs(gap) > 0.25) raw -= 8;
+        const rating = Math.round(U.clamp(40 + 59 * (1 - Math.exp(-Math.max(0, raw - 40) / 30)), 30, 99));
         const tier = rating >= 90 ? 'HOF' : rating >= 83 ? 'GOLD' : rating >= 76 ? 'SILVER' : rating >= 70 ? 'BRONZE' : '';
         const lb = labels(m, g, yes);
         out.push({
           id: m.ticker + (yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind, seg: m.seg, stat: m.stat, side: yes ? 'YES' : 'NO',
-          label: lb.t, sub: lb.s, price, fair, cost, edge, roi, be, maxEntry, greatEntry, kelly, unc, safety, rating, tier,
-          playable: edge >= Math.max(PLAY_MIN, safety) && price <= maxEntry + 1e-9,
+          label: lb.t, sub: lb.s, price, implied, fair, netEdge, edge: netEdge, ev, cost, fee, roi, be: fairMax, fairMax, maxEntry: buyMax, buyMax, kelly: kellyFull * 0.25, scale, unc, safety, rating, tier,
+          survivor: !reason, reason, trend,
+          playable: !reason && price <= buyMax + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
           live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
         });
@@ -225,11 +242,14 @@ const PICKS = (() => {
     // keep the better side per market for ranking
     const best = new Map();
     for (const p of out) { const b = best.get(p.ticker); if (!b || p.edge > b.edge) best.set(p.ticker, p); }
-    const picks = [...best.values()].sort((a, b) => b.rating - a.rating || b.edge - a.edge);
+    const picks = [...best.values()].sort((a, b) => (b.survivor - a.survivor) || b.netEdge - a.netEdge);
+    const survivors = picks.filter((p) => p.survivor);
+    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, roster: rejected.length };
+    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; }
     const pricedKeys = new Set(picks.filter((p) => p.kind === 'prop').map((p) => `${p.data.player.espnId}:${p.stat}`));
     const models = modelPicks(g, rec, ls, pricedKeys);
     updateFeed(g, picks);
-    return { picks, models, all: out, pending, at: now };
+    return { picks, survivors, audit, rejected, models, all: out, pending, at: now };
   }
 
   function updateFeed(g, picks) {
@@ -250,83 +270,114 @@ const PICKS = (() => {
     persist();
   }
 
-  // ---- evidence ("why") bullets ----
-  function evidence(p, g) {
-    const out = [];
+  // ---- Phase 3 evidence: four quantified sections + verified roster line ----
+  const P2 = (x) => (x == null || !isFinite(x) ? '—' : (x * 100).toFixed(2) + '%');
+  const f3 = (x) => (x == null || !isFinite(x) ? '—' : x.toFixed(3));
+  const f1 = (x) => (x == null || !isFinite(x) ? '—' : x.toFixed(1));
+  const NA = 'not in public feed — not applied';
+  function statusLine(p, g) {
     const rec = INTEL.get(g.id);
-    const ls = g.ls;
+    const rep = `${INTEL.reportSummary(rec, g, 'away')}; ${INTEL.reportSummary(rec, g, 'home')}${rec?.sumAt ? ` (report pulled ${U.ago(rec.sumAt)})` : ''}`;
+    if (p.kind === 'prop' && !p.modelOnly) {
+      const pl = p.data.player, st = pl.st || {};
+      return `${pl.name}: ${st.code || 'UNVERIFIED'} — ${st.src || ''}${st.detail ? ` (${st.detail})` : ''}${p.data.playP < 1 ? `; DNP risk priced at ${P2(1 - p.data.playP)}` : ''}. Game report — ${rep}.`;
+    }
+    if (p.modelOnly) { const pl = p.data.player, st = pl.st || {}; return `${pl.name}: ${st.code || 'UNVERIFIED'} — ${st.src || ''}. Game report — ${rep}.`; }
+    return `Game report — ${rep}. Players not listed are treated as fully active.`;
+  }
+  function evidence(p, g) {
+    const rec = INTEL.get(g.id), ls = g.ls, m = p.m;
+    const pm = rec?.poss || INTEL.possModel(g);
+    const sec = { arb: [], pace: [], rot: [], match: [] };
+    const priceTxt = p.price == null ? 'No live price' : p.book ? `${p.book} ${fmtAm(p.am)} → ${P2(p.implied)}` : `Kalshi ask $${p.price.toFixed(2)} → ${P2(p.implied)}`;
     if (p.kind === 'prop') {
-      const pl = p.data.player, pr = pl.proj, m = p.m;
-      const st = m.stat, S = MODEL.SHORT[st] || st;
-      const k = m.th?.k;
-      const fp = p.data.fp;
+      const pl = p.data.player, pr = pl.proj, st = m.stat, S = MODEL.SHORT[st] || st, k = m.th?.k, fp = p.data.fp, cx = pl.ctx || {};
+      const prj = pr.proj[st] || {}, sd = fp.sd || Math.sqrt(prj.variance || 0), mu = fp.mu ?? prj.mu;
+      // ---- DISCREPANCY ARBITRAGE ----
+      if (!p.modelOnly) {
+        const mktMu = sd > 0 ? (k - 0.5) - sd * U.normInv(1 - p.price) : null;
+        sec.arb.push(`${priceTxt}. Model P(${S} ≥ ${k}) = ${P2(fp.pModel ?? fp.p)} from a ${f1(mu)} ± ${f1(sd)} projection${fp.mmid != null && fp.wModel < 1 ? `; market-prior blend (${Math.round((1 - fp.wModel) * 100)}% weight on mid ${P2(fp.mmid)})` : ''} → true ${P2(p.fair)}.`);
+        if (mktMu != null && isFinite(mktMu)) sec.arb.push(`The ask prices a ${f1(mktMu)} ${S} mean under the same σ; the model projects ${f1(mu)} (${U.signed(mu - mktMu, 1)}).`);
+        sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; after the ${m.book ? 'book vig' : `$${p.fee.toFixed(3)} taker fee`} EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 contract (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      } else {
+        sec.arb.push(`No live Kalshi quote on this line: model ${P2(fp.p)} vs ${fp.liveBase ? 'pregame model' : 'season-average baseline'} ${P2(fp.base)}. Not edge-verified; buy only at ≤ $${p.maxEntry.toFixed(2)}.`);
+      }
+      const hh = p.trend?.hh || MODEL.hitHistory(pr.games, st, k, cx.season);
+      if (hh) sec.arb.push(`Trend audit at ${k}+: L5 ${hh.l5.h}/${hh.l5.n}, L10 ${hh.l10.h}/${hh.l10.n}, L20 ${hh.l20.h}/${hh.l20.n}; L10 avg ${f1(hh.avg10)} vs projection ${f1(prj.mu)} — ${prj.mu >= hh.avg10 * 0.95 ? 'no regression conflict' : 'projection below the trend (trend carries no weight)'}.`);
+      if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after ${pl.name}'s stat moved ${p.lag.sinceScore}s ago; fair value shifted ${U.signed(p.lag.move * 100, 1)} pts.`);
+      if (p.delayed) sec.arb.push(`Price from the published Kalshi feed, ${U.ago(m.snapAt)}; uncertainty widened by ${f1(Math.min(4, 1.2 * p.delayed))} pts.`);
+      // ---- POSSESSION & PACE MODEL ----
+      const team = g[pl.side], opp = g[pl.side === 'home' ? 'away' : 'home'];
+      if (cx.poss) sec.pace.push(`Projected possessions ${f1(cx.poss)} = ${team.abbr} ${f1(cx.teamPace)} × ${opp.abbr} ${f1(pl.side === 'home' ? pm.paceA : pm.paceH)} ÷ league ${f1(pm.lgPace)} (${pm.src}). ${team.abbr} baseline ${f1(cx.teamPace)} → volume ×${f3(cx.paceF)}.`);
+      if (cx.defF) sec.pace.push(`${opp.abbr} allows ${f1(cx.oppDrtg)} pts/100 poss vs league ${f1(cx.lgRtg)} → efficiency ×${f3(cx.defF)} (applied to PTS ×1.0, 3PM ×0.8, AST ×0.5).`);
+      if (cx.marketF != null) sec.pace.push(`Market-implied ${team.abbr} total ${f1(cx.impliedPts)} vs ${f1(cx.teamAvgPts)} season avg (×${f3(cx.marketF)}); blended 50/50 → ${S} environment ×${f3(pr.env?.[MODEL.COMBO[st] ? 'pts' : st])}.`);
+      if (!ls.pre && ls.elapsed > 2) sec.pace.push(`Live: ${ls.total} pts in ${f1(ls.elapsed)} min = ${f1(ls.total / ls.elapsed * 48)} pts/48 vs pregame total ${f1(g.pre?.total)}; ${f1(ls.rem)} min remaining.`);
+      sec.pace.push(`Home/away pace variance and half-court vs transition splits: ${NA}.`);
+      // ---- ROTATIONAL & USAGE MATH ----
       if (p.data.live) {
         const lb = p.data.live;
-        out.push({ k: 'live', t: `Live: ${fp.cur} ${S} in ${lb.min.toFixed(0)} min (${lb.pf} PF${lb.oncourt ? ', on court' : ', on bench'}) → needs ${Math.max(0, (k ?? 0) - fp.cur)} more in ~${fp.r.toFixed(1)} projected min` });
-        for (const n of fp.notes || []) out.push({ k: 'risk', t: n });
+        sec.rot.push(`Live: ${fp.cur} ${S} in ${f1(lb.min)} min, ${lb.pf} PF, ${lb.oncourt ? 'on court' : 'on bench'}; needs ${Math.max(0, (k ?? 0) - fp.cur)} more in ${f1(fp.r)} projected remaining min.`);
+        for (const n of fp.notes || []) sec.rot.push(n + '.');
       }
-      const sd = Math.sqrt(pr.proj[st]?.variance ?? 0);
-      if (pr.proj[st]) out.push({ k: 'proj', t: `Projection ${pr.proj[st].mu.toFixed(1)} ${S} (±${sd.toFixed(1)}) on ${pr.minProj.toFixed(1)} min vs line ${k != null ? k + '+' : '—'}` });
-      const hh = MODEL.hitHistory(pr.games, st, k, pl.ctx.season);
-      if (hh) {
-        const r = (o) => `${o.h}/${o.n}`;
-        out.push({ k: 'hits', t: `Hit ${k}+: L5 ${r(hh.l5)} · L10 ${r(hh.l10)} · L20 ${r(hh.l20)}${hh.season.n ? ' · this season ' + r(hh.season) : ''}` });
-        if (Math.abs(hh.streak) >= 3) out.push({ k: 'streak', t: hh.streak > 0 ? `Streak: hit ${k}+ in ${hh.streak} straight` : `Streak: missed ${k}+ in ${-hh.streak} straight` });
-        out.push({ k: 'form', t: `Last 10: ${hh.last.join(', ')} (avg L5 ${hh.avg5.toFixed(1)}, L10 ${hh.avg10.toFixed(1)})` });
-      }
-      const h2h = pr.games.filter((r) => r.opp === pl.ctx.opp).slice(0, 5);
-      if (h2h.length) out.push({ k: 'h2h', t: `vs ${pl.ctx.opp} (last ${h2h.length}): ${h2h.map((r) => MODEL.statVal(r, st)).join(', ')} ${S}${pr.proj[st]?.h2hF && Math.abs(pr.proj[st].h2hF - 1) > 0.01 ? ` → ${U.signed((pr.proj[st].h2hF - 1) * 100, 0)}% adj` : ''}` });
-      const oppT = STATE.standings?.teams?.[g[pl.side === 'home' ? 'away' : 'home'].id];
-      if (oppT?.pa) out.push({ k: 'def', t: `${pl.ctx.opp} defense: ${oppT.pa.toFixed(1)} pts allowed/g (#${oppT.defRank} of 30)${pl.matchup ? ` · likely matchup ${pl.matchup.name}${pl.matchup.pos ? ' (' + pl.matchup.pos + ')' : ''}` : ''}` });
-      const spl = pl.splits;
-      const key = ['pts', 'reb', 'ast', 'fg3m'].includes(st) ? st : 'pts';
-      if (spl?.home && spl?.away) out.push({ k: 'split', t: `Home ${spl.home[key].toFixed(1)} / Away ${spl.away[key].toFixed(1)} ${MODEL.SHORT[key]}${spl.topD && spl.botD ? ` · vs top-10 D ${spl.topD[key].toFixed(1)} / bottom-10 D ${spl.botD[key].toFixed(1)}` : ''}` });
-      if (spl?.b2b && spl.b2b.n >= 3 && spl?.rested) out.push({ k: 'rest', t: `On 0 days rest ${spl.b2b[key].toFixed(1)} vs rested ${spl.rested[key].toFixed(1)} ${MODEL.SHORT[key]} (n=${spl.b2b.n})` });
-      for (const n of pr.notes) out.push({ k: n.k, t: n.t });
-      if (fp.mmid != null && fp.wModel < 1) out.push({ k: 'blend', t: `Model ${U.pct(fp.pModel)} · market mid ${U.pct(fp.mmid)} → confidence ${U.pct(fp.p)} (market prior weight ${Math.round((1 - fp.wModel) * 100)}%${fp.wModel >= 0.85 ? ', quote is stale' : ''})` });
-      if (Math.abs(fp.gap || 0) > 0.25) out.push({ k: 'risk', t: `Model and market disagree by ${Math.round(Math.abs(fp.gap) * 100)} pts — check injury news and minutes before trusting this one` });
-      if (pl.status) out.push({ k: 'risk', t: `Injury report: ${pl.status} — check the market's no-play rules before entering` });
-      if (pr.nEff < 8) out.push({ k: 'risk', t: `Thin sample (${pr.games.length} games) — wider safety margin applied` });
+      sec.rot.push(`Minutes ${f1(pr.minProj)} projected (weighted ${f1(pr.minBase)}, L5 ${f1(pr.l5min)}).`);
+      const fat = pr.fat || cx.fat;
+      sec.rot.push(fat?.known ? (fat.flags.length ? `Fatigue matrix: ${fat.flags.join('; ')}.` : `Fatigue matrix: ${fat.since - 1} days rest, ${fat.in4} games in 4 nights, ${fat.road7} road games in 7, ${fat.tz} time-zone shift — no penalty.`) : 'Fatigue matrix: schedule not loaded — no penalty applied.');
+      const u = pr.usage || {};
+      if (u.all != null) sec.rot.push(`Usage proxy (FGA + 0.44·FTA + TOV)/min: ${f3(u.all)} (L5 ${f3(u.l5)}).`);
+      for (const x of u.mates || []) sec.rot.push(`Without ${x.name} (${x.code}, official; ${x.n} games): usage ${f3(x.without)}/min vs ${f3(x.with)} with (${U.signed((x.without / x.with - 1) * 100, 1)}%).`);
+      for (const n of pr.notes.filter((n) => n.k === 'inj' || n.k === 'blowout')) sec.rot.push(n.t + '.');
+      sec.rot.push(`Minutes restriction: ${pl.st?.code === 'MINUTES RESTRICTION' ? 'listed on the game report' : 'none listed on the game report'}. Coaching rotation quotes / minute caps: ${NA}.`);
+      // ---- MATCHUP & DEFENSIVE AUDIT ----
+      const d = pl.matchup;
+      if (d) sec.match.push(d.stl36 != null ? `Estimated primary defender ${d.name} (${d.pos || '—'}, ${f1(d.min)} proj min): ${f1(d.stl36)} STL, ${f1(d.blk36)} BLK, ${f1(d.pf36)} PF per 36 over his last ${d.n}.` : `Estimated primary defender ${d.name} (${d.pos || '—'}); defensive logs not loaded.`);
+      sec.match.push(`${opp.abbr} team defense ${f1(cx.oppDrtg)} pts/100 poss${cx.oppDefRank ? ` (#${cx.oppDefRank} in points allowed)` : ''}.`);
+      const h2h = pr.games.filter((r) => r.opp === cx.opp).slice(0, 5);
+      if (h2h.length) sec.match.push(`vs ${cx.opp} last ${h2h.length}: ${h2h.map((r) => MODEL.statVal(r, st)).join(', ')} ${S}${prj.h2hF && Math.abs(prj.h2hF - 1) > 0.005 ? ` → ×${f3(prj.h2hF)}` : ' (no adjustment)'}.`);
+      const spl = pl.splits, key = ['pts', 'reb', 'ast', 'fg3m'].includes(st) ? st : 'pts';
+      if (spl?.topD && spl?.botD) sec.match.push(`vs top-10 defenses ${f1(spl.topD[key])} (n=${spl.topD.n}) / bottom-10 ${f1(spl.botD[key])} (n=${spl.botD.n}) ${MODEL.SHORT[key]}; home ${f1(spl.home?.[key])} / away ${f1(spl.away?.[key])}.`);
+      sec.match.push(`Individual defensive rating, block/steal %, archetype containment, zone and play-type defense: ${NA}.`);
     } else {
-      const pre = g.pre?.src || {};
+      // ---- game lines ----
+      const pre = g.pre?.src || {}, fp = p.data.fp;
       const bits = [];
-      if (pre.bookSpread != null) bits.push(`${pre.book || 'Book'} ${pre.bookSpread >= 0 ? g.home.abbr + ' −' + pre.bookSpread.toFixed(1) : g.away.abbr + ' −' + (-pre.bookSpread).toFixed(1)}`);
+      if (pre.bookSpread != null) bits.push(`${pre.book || 'book'} ${pre.bookSpread >= 0 ? g.home.abbr : g.away.abbr} −${Math.abs(pre.bookSpread).toFixed(1)}`);
       if (pre.bookTotal) bits.push(`O/U ${pre.bookTotal}`);
-      if (pre.bookP != null) bits.push(`no-vig ML ${U.pct(pre.bookP)} ${g.home.abbr}`);
-      if (pre.bpi != null) bits.push(`ESPN BPI ${U.pct(pre.bpi)}`);
-      if (pre.kalshiSpread != null) bits.push(`Kalshi ladder ${U.signed(pre.kalshiSpread, 1)}`);
-      if (bits.length) out.push({ k: 'cons', t: 'Pregame consensus: ' + bits.join(' · ') });
-      const fp = p.data.fp;
-      if (p.kind === 'total') out.push({ k: 'proj', t: `Projected total ${fp.mu.toFixed(1)} ± ${fp.sd.toFixed(1)}${ls && !ls.pre ? ` (now ${ls.total}, ${ls.rem.toFixed(1)} min left)` : ''}` });
-      else if (fp.mu != null) out.push({ k: 'proj', t: `Projected ${p.kind === 'spread' ? g[p.m.side].abbr + ' margin' : 'home margin'} ${U.signed(fp.mu, 1)} ± ${fp.sd.toFixed(1)}` });
-      if (ls && !ls.pre) {
-        out.push({ k: 'live', t: `Live: ${g.away.abbr} ${g.away.score}–${g.home.score} ${g.home.abbr}, ${U.periodShort(ls.period)} ${U.fmtClock(ls.clockSec)}${g.espnWP != null ? ` · ESPN WP ${U.pct(g.espnWP)} ${g.home.abbr}` : ''}` });
-        if (g.run && g.run.pts >= 6) out.push({ k: 'mom', t: `Momentum: ${g[g.run.side].abbr} on a ${g.run.pts}–${g.run.opp} run` });
-        if (g.sMkt != null) out.push({ k: 'cal', t: `Market-calibrated strength ${U.signed(g.sMkt, 1)} vs pregame ${U.signed(g.pre.spread, 1)} (blend used: ${U.signed(g.sEff, 1)})` });
+      if (pre.bookP != null) bits.push(`no-vig ML ${P2(pre.bookP)} ${g.home.abbr}`);
+      if (pre.bpi != null) bits.push(`ESPN BPI ${P2(pre.bpi)}`);
+      if (pre.kalshiSpread != null) bits.push(`Kalshi spread ladder ${U.signed(pre.kalshiSpread, 1)}`);
+      if (pre.kalshiTotal != null) bits.push(`Kalshi total ladder ${f1(pre.kalshiTotal)}`);
+      sec.arb.push(`${priceTxt}. Model ${P2(p.fair)} (${fp.mu != null ? `mean ${U.signed(fp.mu, 1)} ± ${f1(fp.sd)}` : 'segment model'}). Consensus inputs: ${bits.join(', ') || 'Kalshi prices only'}.`);
+      sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after a score ${p.lag.sinceScore}s ago; fair value moved ${U.signed(p.lag.move * 100, 1)} pts.`);
+      if (p.delayed) sec.arb.push(`Price from the published Kalshi feed, ${U.ago(m.snapAt)}.`);
+      sec.pace.push(`Projected possessions ${f1(pm.poss)} = ${g.home.abbr} ${f1(pm.paceH)} × ${g.away.abbr} ${f1(pm.paceA)} ÷ league ${f1(pm.lgPace)} (${pm.src}). Consensus total ${f1(g.pre?.total)}; model total ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).mu)} ± ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).sd)}.`);
+      if (!ls.pre && ls.elapsed > 2) sec.pace.push(`Live: ${g.away.abbr} ${g.away.score}–${g.home.score} ${g.home.abbr}, ${U.periodShort(ls.period)} ${U.fmtClock(ls.clockSec)}; ${f1(ls.total / ls.elapsed * 48)} pts/48${g.run && g.run.pts - g.run.opp >= 6 ? `; ${g[g.run.side].abbr} ${g.run.pts}–${g.run.opp} run` : ''}.`);
+      for (const side of ['away', 'home']) {
+        const l = INTEL.injuriesFor(rec, g, side).filter((x) => /OUT|DOUBTFUL/.test(x.code));
+        sec.rot.push(`${g[side].abbr}: ${l.length ? l.map((x) => `${x.name} ${x.code}`).join(', ') : 'no OUT/DOUBTFUL designations'}.`);
       }
-      const inj = rec ? [...INTEL.injuriesFor(rec, g, 'home'), ...INTEL.injuriesFor(rec, g, 'away')].filter((x) => /out/i.test(x.status)) : [];
-      if (inj.length) out.push({ k: 'inj', t: 'Out: ' + inj.slice(0, 6).map((x) => x.name).join(', ') });
-      const st = STATE.standings?.teams;
-      const h = st?.[g.home.id], a = st?.[g.away.id];
-      if (h?.pf && a?.pf) out.push({ k: 'def', t: `Off/Def ppg — ${g.away.abbr} ${a.pf.toFixed(1)}/${a.pa.toFixed(1)} (#${a.offRank}/#${a.defRank}) · ${g.home.abbr} ${h.pf.toFixed(1)}/${h.pa.toFixed(1)} (#${h.offRank}/#${h.defRank})` });
+      const fh = g.fat?.home, fa = g.fat?.away;
+      if (fh?.known || fa?.known) sec.rot.push(`Fatigue matrix — ${g.away.abbr}: ${fa?.flags.length ? fa.flags.join('; ') : 'none'}; ${g.home.abbr}: ${fh?.flags.length ? fh.flags.join('; ') : 'none'}. Differential ${U.signed(g.fatAdj * 2, 1)} pts, applied at 50% weight (${U.signed(g.fatAdj, 1)}) because the consensus partly prices rest.`);
+      if (g.sMkt != null) sec.rot.push(`Live strength re-anchored to the market in quiet stretches: ${U.signed(g.sMkt, 1)} vs pregame ${U.signed(g.pre.spread, 1)} → ${U.signed(g.sEff, 1)} used.`);
+      const h = pm.h, a = pm.a;
+      sec.match.push(`Per 100 possessions — ${g.away.abbr} O ${f1(a.ortg)} / D ${f1(a.drtg)}${a.defRank ? ` (#${a.offRank}/#${a.defRank})` : ''}; ${g.home.abbr} O ${f1(h.ortg)} / D ${f1(h.drtg)}${h.defRank ? ` (#${h.offRank}/#${h.defRank})` : ''}; league ${f1(pm.lgRtg)}.`);
+      const ser = rec?.summary?.series;
+      if (ser?.events?.length) sec.match.push(`Season series: ${ser.events.map((e) => `${e.away} ${e.as}–${e.hs} ${e.home}`).join(', ')}.`);
+      sec.match.push(`Zone and play-type team defense: ${NA}.`);
     }
-    if (p.lag) out.unshift({ k: 'lag', t: `Stale price: quote unchanged ${p.lag.sec}s while the score moved ${p.lag.sinceScore}s ago — fair value moved ${U.signed(p.lag.move * 100, 1)}¢` });
-    const m = p.m;
-    if (p.modelOnly) {
-      const fp = p.data.fp, pYes = fp.p, bYes = fp.base;
-      out.unshift({ k: 'proj', t: fp.liveBase ? `Live model ${U.pct(p.yes ? pYes : 1 - pYes)} vs pregame model ${U.pct(p.yes ? bYes : 1 - bYes)} (live swing ${U.signed(p.lean * 100, 1)} pts)` : `Model ${U.pct(p.yes ? pYes : 1 - pYes)} vs season-average baseline ${U.pct(p.yes ? bYes : 1 - bYes)} (context lean ${U.signed(p.lean * 100, 1)} pts)` });
-      out.push({ k: 'mkt', t: `No live Kalshi price loaded for this line. On Kalshi or Robinhood, buy ${p.side} on "${m.sub}" only at ≤ ${U.cents(p.maxEntry)} (great ≤ ${U.cents(p.greatEntry)}).` });
-    } else if (p.book) {
-      out.push({ k: 'mkt', t: `${m.sub}. Price ${fmtAm(p.am)} = ${U.cents(p.price)} implied (vig included). Kalshi had no open market for this line.` });
-    } else {
-      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · ${m.snapAt ? 'price as of ' + U.ago(m.snapAt) : 'requoted ' + U.ago(m.quoteAt)}` });
-      if (m.snapAt) out.push({ k: 'risk', t: `Delayed Kalshi feed (${U.ago(m.snapAt)}). Confirm the live price on Kalshi is still at or below ${U.cents(p.maxEntry)} before entering.` });
-    }
-    return out;
+    return {
+      status: statusLine(p, g),
+      sections: [
+        { k: 'arb', title: 'DISCREPANCY ARBITRAGE', t: sec.arb.join(' ') },
+        { k: 'pace', title: 'POSSESSION & PACE MODEL', t: sec.pace.join(' ') },
+        { k: 'rot', title: 'ROTATIONAL & USAGE MATH', t: sec.rot.join(' ') },
+        { k: 'match', title: 'MATCHUP & DEFENSIVE AUDIT', t: sec.match.join(' ') },
+      ],
+    };
   }
 
   function feed(gameId) { return [...(FEED.get(gameId)?.values() || [])].sort((a, b) => b.firstSeen - a.firstSeen); }
   function allFeed() { const o = []; for (const f of FEED.values()) o.push(...f.values()); return o.sort((a, b) => b.firstSeen - a.firstSeen); }
 
-  return { evaluate, evidence, feed, allFeed, labels, fmtAm };
+  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm };
 })();

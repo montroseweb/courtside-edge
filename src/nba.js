@@ -28,7 +28,7 @@ const NBA = (() => {
         pos: p.position || '', jersey: p.jerseyNum || '', starter: p.starter === '1', oncourt: p.oncourt === '1', played: p.played === '1',
         status: p.status || 'ACTIVE', notPlaying: p.notPlayingReason || '',
         min: (U.isoDur(s.minutes) ?? 0) / 60, pts: +s.points || 0, reb: +s.reboundsTotal || 0, ast: +s.assists || 0, fg3m: +s.threePointersMade || 0,
-        fg3a: +s.threePointersAttempted || 0, stl: +s.steals || 0, blk: +s.blocks || 0, tov: +s.turnovers || 0, pf: +s.foulsPersonal || 0, pm: +s.plusMinusPoints || 0,
+        fg3a: +s.threePointersAttempted || 0, fga: +s.fieldGoalsAttempted || 0, fta: +s.freeThrowsAttempted || 0, stl: +s.steals || 0, blk: +s.blocks || 0, tov: +s.turnovers || 0, pf: +s.foulsPersonal || 0, pm: +s.plusMinusPoints || 0,
       };
     });
     return {

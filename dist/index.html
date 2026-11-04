@@ -333,6 +333,26 @@ input[type="checkbox"] { accent-color: var(--aero); }
 .chipx.live { background: #c8261c; color: #fff; }
 .chipx.lag { background: var(--warn); color: #241900; }
 .chipx.new { background: var(--aero); color: #001427; }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.facts li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; padding: 4px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.06); }
+.facts li label { color: var(--ink-3); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; }
+.facts li span { grid-column: 1 / -1; color: var(--ink-2); overflow-wrap: anywhere; }
+.facts li b { font: 600 18px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.facts li small { grid-column: 1 / -1; color: var(--ink-3); font-size: 10.5px; }
+.facts li.rej span { color: var(--warn); }
+.facts li em { font-style: normal; color: var(--ink-3); }
+.evs { list-style: none; padding-left: 0 !important; }
+.evs li { padding: 6px 8px; border-left: 2px solid var(--aero); background: rgba(73, 176, 255, 0.05); border-radius: 0 4px 4px 0; line-height: 1.5; }
+.evs li b { color: var(--ink); letter-spacing: 0.04em; font-size: 11.5px; }
+.audit { margin: 0 0 4px; font-size: 12px; color: var(--ink-2); padding: 6px 8px; border-radius: 5px; background: rgba(0, 0, 0, 0.3); border: 1px dashed rgba(255, 255, 255, 0.15); }
+.rejbox { border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 6px 8px; background: rgba(0, 0, 0, 0.22); }
+.rejbox > summary { color: var(--ink-2); }
+.rejrow { display: grid; gap: 1px; padding: 5px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 12px; }
+.rejrow span { color: var(--ink-3); }
+.pick.parlay { border-color: rgba(185, 140, 255, 0.45); }
+.badge.plx { color: #fff; background: linear-gradient(160deg, #e6d2ff 0%, #9b62f5 45%, #5d2bb5 100%); }
+.parlays-w { border-color: rgba(185, 140, 255, 0.5); }
+#slateParlays { padding: 8px; }
 .chipx.delayed { background: #6b5a1f; color: #fff3cf; }
 .chipx.model { background: #2a4a6b; color: #cfe6ff; }
 .chipx.book { background: #1f5f3a; color: #d6ffe4; }
@@ -435,7 +455,8 @@ ul.inj small { color: var(--ink-3); }
 </header>
 <main class="page">
   <div id="banner" hidden></div>
-  <section class="window ticker-w buynow-w"><div class="titlebar"><span class="tb-t">Buy Now<small>Kalshi prices under the model's max entry, biggest edge first</small></span></div><div id="ticker"><p class="muted">Scanning markets…</p></div></section>
+  <section class="window ticker-w buynow-w"><div class="titlebar"><span class="tb-t">Buy Now<small>contracts inside the buy zone right now, highest net edge first</small></span></div><div id="ticker"><p class="muted">Scanning markets…</p></div></section>
+  <section class="window parlays-w"><div class="titlebar"><span class="tb-t">Optimal Parlays<small>2- and 3-leg tickets from stress-tested survivors, highest compound edge first</small></span></div><div id="slateParlays" class="plist"><p class="muted small">Building from Section 1 survivors…</p></div></section>
   <nav class="datebar" id="dates" aria-label="Choose a date"></nav>
   <section class="games" id="games"></section>
   <p class="muted small">Scores: ESPN + NBA official live feed (fastest source wins). Prices: Kalshi public market data. Fair values are model estimates, not guarantees. Tap any court to open its Pick Finder.</p>
@@ -715,9 +736,13 @@ const TEAMS = (() => {
     ['MEM', 29, 'MEM', 'Memphis', 'Grizzlies', '5d76a9', '12173f', 'FedExForum', { wood: 'amber', paint: '#12173f', apron: '#12173f', line: '#ffffff', accent: '#5d76a9', stain: null }],
     ['CHA', 30, 'CHA', 'Charlotte', 'Hornets', '1d1160', '00788c', 'Spectrum Center', { wood: 'maple', paint: '#00788c', apron: '#1d1160', line: '#ffffff', accent: '#a1a1a4', stain: null, honeycomb: true }],
   ];
+  // standard-time UTC offsets (hours) and arena elevation (ft) for travel/fatigue math
+  const TZ = { ATL: -5, BOS: -5, BKN: -5, CHA: -5, CLE: -5, DET: -5, IND: -5, MIA: -5, NYK: -5, ORL: -5, PHI: -5, TOR: -5, WAS: -5,
+    CHI: -6, DAL: -6, HOU: -6, MEM: -6, MIL: -6, MIN: -6, NOP: -6, OKC: -6, SAS: -6, DEN: -7, UTA: -7, PHX: -7, GSW: -8, LAC: -8, LAL: -8, POR: -8, SAC: -8 };
+  const ELEV = { DEN: 5280, UTA: 4226 };
   const byEspn = {}, byId = {}, byCode = {};
   const list = T.map(([espn, id, code, city, name, color, alt, arena, court]) => {
-    const t = { espn, id: String(id), code, city, name, color, alt, arena, court };
+    const t = { espn, id: String(id), code, city, name, color, alt, arena, court, tz: TZ[code] ?? -5, elev: ELEV[code] || 0 };
     byEspn[espn] = t; byId[String(id)] = t; byCode[code] = t;
     return t;
   });
@@ -989,6 +1014,7 @@ const ESPN = (() => {
     min: ['minutes', 'MIN'], pts: ['points', 'PTS'], reb: ['rebounds', 'totalRebounds', 'REB'], ast: ['assists', 'AST'],
     fg3: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted', '3PT'], stl: ['steals', 'STL'], blk: ['blocks', 'BLK'],
     tov: ['turnovers', 'TO'], pf: ['fouls', 'PF'], pm: ['plusMinus', '+/-'],
+    fg: ['fieldGoalsMade-fieldGoalsAttempted', 'FG'], ft: ['freeThrowsMade-freeThrowsAttempted', 'FT'],
   };
   function colIndex(stat) {
     const keys = stat.keys || stat.names || [], names = stat.names || [], labels = stat.labels || [];
@@ -1012,7 +1038,8 @@ const ESPN = (() => {
           const s = a.stats || [];
           const g = (k) => (ix[k] >= 0 ? s[ix[k]] : null);
           const [f3m, f3a] = made(g('fg3'));
-          players.push({
+          const [, fga] = made(g('fg')), [, fta] = made(g('ft'));
+          players.push({ fga, fta,
             espnId: String(a.athlete?.id || ''), name: a.athlete?.displayName || '', short: a.athlete?.shortName || '',
             pos: a.athlete?.position?.abbreviation || '', jersey: a.athlete?.jersey || '', teamId,
             starter: !!a.starter, active: a.active !== false, dnp: !!a.didNotPlay || !s.length,
@@ -1099,6 +1126,7 @@ const ESPN = (() => {
   const GL = {
     min: ['minutes', 'MIN'], pts: ['points', 'PTS'], reb: ['totalRebounds', 'rebounds', 'REB'], ast: ['assists', 'AST'],
     fg3: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted', '3PT'], stl: ['steals', 'STL'], blk: ['blocks', 'BLK'], tov: ['turnovers', 'TO'], pf: ['fouls', 'PF'],
+    fg: ['fieldGoalsMade-fieldGoalsAttempted', 'FG'], ft: ['freeThrowsMade-freeThrowsAttempted', 'FT'],
   };
   function parseGamelog(j, season) {
     if (!j) return [];
@@ -1120,7 +1148,8 @@ const ESPN = (() => {
           const min = U.num(g('min'));
           if (!s.length || min == null) continue;
           const [f3m, f3a] = made(g('fg3'));
-          rows.push({
+          const fgx = g('fg'), ftx = g('ft');
+          rows.push({ fga: fgx != null ? made(fgx)[1] : null, fta: ftx != null ? made(ftx)[1] : null,
             eventId: String(ev.eventId), date: Date.parse(m.gameDate) || 0, opp: TEAMS.toCode(m.opponent?.abbreviation), oppId: String(m.opponent?.id || ''),
             home: m.atVs ? m.atVs !== '@' : null, result: m.gameResult || '', season, post,
             min, pts: U.num(g('pts')) ?? 0, reb: U.num(g('reb')) ?? 0, ast: U.num(g('ast')) ?? 0, fg3m: f3m, fg3a: f3a,
@@ -1154,7 +1183,21 @@ const ESPN = (() => {
     return { teams: out, lgPts: lg };
   }
 
+  // team season averages; possessions/game = FGA + 0.44·FTA − OREB + TOV
+  function parseTeamStats(j) {
+    const v = {};
+    const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) { o.forEach(walk); return; } if (typeof o.name === 'string' && (o.value != null || o.displayValue != null)) { const x = U.num(o.value ?? o.displayValue); if (x != null && v[o.name] == null) v[o.name] = x; } for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); };
+    walk(j);
+    const pick = (...ks) => { for (const k of ks) if (v[k] != null) return v[k]; return null; };
+    const fga = pick('avgFieldGoalsAttempted'), fta = pick('avgFreeThrowsAttempted'), oreb = pick('avgOffensiveRebounds'), tov = pick('avgTurnovers', 'avgTotalTurnovers');
+    const gp = pick('gamesPlayed');
+    if (fga == null || fta == null || oreb == null || tov == null) return null;
+    const pace = fga + 0.44 * fta - oreb + tov;
+    return pace > 80 && pace < 120 ? { pace, fga, fta, oreb, tov, gp } : null;
+  }
+
   return {
+    teamStats: (teamId) => NET.get('espn', `${P}/teams/${teamId}/statistics`).then(parseTeamStats),
     scoreboard: (key) => NET.get('espn', `${P}/scoreboard?dates=${key}&limit=50`, { fresh: true, timeout: 6000 }).then(parseScoreboard),
     summary: (id, game) => NET.get('espn', `${P}/summary?event=${id}`, { fresh: true }).then((j) => parseSummary(j, game)),
     roster: (teamId) => NET.get('espn', `${P}/teams/${teamId}/roster`).then(parseRoster),
@@ -1195,7 +1238,7 @@ const NBA = (() => {
         pos: p.position || '', jersey: p.jerseyNum || '', starter: p.starter === '1', oncourt: p.oncourt === '1', played: p.played === '1',
         status: p.status || 'ACTIVE', notPlaying: p.notPlayingReason || '',
         min: (U.isoDur(s.minutes) ?? 0) / 60, pts: +s.points || 0, reb: +s.reboundsTotal || 0, ast: +s.assists || 0, fg3m: +s.threePointersMade || 0,
-        fg3a: +s.threePointersAttempted || 0, stl: +s.steals || 0, blk: +s.blocks || 0, tov: +s.turnovers || 0, pf: +s.foulsPersonal || 0, pm: +s.plusMinusPoints || 0,
+        fg3a: +s.threePointersAttempted || 0, fga: +s.fieldGoalsAttempted || 0, fta: +s.freeThrowsAttempted || 0, stl: +s.steals || 0, blk: +s.blocks || 0, tov: +s.turnovers || 0, pf: +s.foulsPersonal || 0, pm: +s.plusMinusPoints || 0,
       };
     });
     return {
@@ -1815,7 +1858,12 @@ const MODEL = (() => {
     const last5 = games.slice(0, 5);
     let minProj = 0.6 * U.wmean(games.map((r) => r.min), w) + 0.4 * U.mean(last5.map((r) => r.min));
     const minBase = minProj;
-    if (ctx.b2b) { minProj *= 0.965; notes.push({ k: 'b2b', t: 'Second night of a back-to-back (−3.5% minutes)' }); }
+    const fat = ctx.fat || { minF: 1, effF: 1, flags: [] };
+    if (fat.minF !== 1) minProj *= fat.minF;
+    // usage proxy per minute: (FGA + 0.44·FTA + TOV) / MIN
+    const ug = games.filter((r) => r.fga != null && r.fta != null);
+    const usage = (arr) => { const m = U.sum(arr.map((r) => r.min)); return m ? U.sum(arr.map((r) => r.fga + 0.44 * r.fta + (r.tov || 0))) / m : null; };
+    const usageInfo = { all: ug.length >= 3 ? usage(ug) : null, l5: ug.length >= 3 ? usage(ug.slice(0, 5)) : null, mates: [] };
     const sp = Math.abs(ctx.spreadTeam || 0);
     if (sp > 8 && minProj > 26) { const f = Math.max(0.9, 1 - 0.006 * (sp - 8)); minProj *= f; notes.push({ k: 'blowout', t: `Blowout risk (spread ${sp.toFixed(1)}) trims starter minutes ${(100 - f * 100).toFixed(1)}%` }); }
 
@@ -1834,13 +1882,16 @@ const MODEL = (() => {
       const without = pool.filter((r) => !mDates.has(Math.floor(r.date / 864e5)));
       const withG = pool.filter((r) => mDates.has(Math.floor(r.date / 864e5)));
       const mateAvg = U.mean(mlogs.slice(0, 15).map((r) => r.pts));
+      const mw = mate.w ?? 1; // OUT = 1, DOUBTFUL = 0.75
       if (without.length >= 2 && withG.length >= 3) {
         const parts = [];
+        const uW = usage(without.filter((r) => r.fga != null)), uWi = usage(withG.filter((r) => r.fga != null));
+        if (uW != null && uWi != null) usageInfo.mates.push({ name: mate.name, code: mate.code || 'OUT', with: uWi, without: uW, n: without.length, nWith: withG.length });
         for (const s of STATS) {
           const rw = U.sum(without.map((r) => r[s])) / Math.max(1, U.sum(without.map((r) => r.min)));
           const rwi = U.sum(withG.map((r) => r[s])) / Math.max(1, U.sum(withG.map((r) => r.min)));
           if (rwi > 0) {
-            const wt = without.length / (without.length + 4);
+            const wt = mw * without.length / (without.length + 4);
             const f = U.clamp(1 + wt * (rw / rwi - 1), 0.85, 1.3);
             mateFx[s] *= f;
             if (s === 'pts' || s === 'ast' || s === 'reb') parts.push(`${SHORT[s]} ${U.signed((f - 1) * 100, 0)}%`);
@@ -1848,24 +1899,28 @@ const MODEL = (() => {
         }
         const minW = U.mean(without.map((r) => r.min)), minWi = U.mean(withG.map((r) => r.min));
         if (isFinite(minW) && isFinite(minWi)) minProj *= U.clamp(1 + (without.length / (without.length + 4)) * (minW / minWi - 1), 0.92, 1.12);
-        mateNotes.push(`${mate.name} OUT — with/without split (${without.length} games without): ${parts.join(', ')}`);
+        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — with/without split, ${without.length} games without vs ${withG.length} with: ${parts.join(', ')}`);
       } else if (isFinite(mateAvg) && mateAvg >= 8) {
         // usage redistribution heuristic
         const teamPts = ctx.teamAvgPts || 114;
         const myPts = U.wmean(games.map((r) => r.pts), w);
         const share = myPts / Math.max(30, teamPts - mateAvg);
         const missedRecent = games.slice(0, 3).every((r) => !mDates.has(Math.floor(r.date / 864e5)));
-        const bump = 0.6 * mateAvg * share * (missedRecent ? 0.5 : 1);
+        const bump = 0.6 * mw * mateAvg * share * (missedRecent ? 0.5 : 1);
         const f = U.clamp(1 + bump / Math.max(3, myPts), 1, 1.18);
         mateFx.pts *= f; mateFx.fg3m *= 1 + (f - 1) * 0.8; mateFx.ast *= 1 + (f - 1) * 0.6; mateFx.reb *= 1 + (f - 1) * 0.4;
-        mateNotes.push(`${mate.name} OUT (${mateAvg.toFixed(1)} ppg) — usage bump ≈ ${U.signed((f - 1) * 100, 0)}% pts${missedRecent ? ' (already missing recent games, half weight)' : ''}`);
+        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official, ${mateAvg.toFixed(1)} ppg) — fewer than 2 games without him in the logs; scoring-share redistribution ${U.signed((f - 1) * 100, 0)}% PTS${missedRecent ? ' (absent from the last 3 games already, half weight)' : ''}`);
       }
     }
     for (const t of mateNotes) notes.push({ k: 'inj', t });
 
-    // environment (market-implied team total vs team's own average)
-    const env = ctx.env || 1;
-    if (Math.abs(env - 1) > 0.01) notes.push({ k: 'env', t: `Scoring environment ${U.signed((env - 1) * 100, 1)}% vs team average (implied team total ${ctx.impliedPts?.toFixed(1) ?? '—'})` });
+    // environment: possession volume × opponent efficiency allowed, blended 50/50 with the market-implied team total
+    const PACE_EXP = { pts: 1, reb: 0.7, ast: 1, fg3m: 1, stl: 1, blk: 0.8 }, DEF_EXP = { pts: 1, fg3m: 0.8, ast: 0.5, reb: 0, stl: 0, blk: 0 };
+    const EFF_EXP = { pts: 1, fg3m: 1.3, ast: 0.4, reb: 0, stl: 0, blk: 0 };
+    const envFor = (s) => {
+      const model = Math.pow(ctx.paceF ?? 1, PACE_EXP[s] ?? 1) * Math.pow(ctx.defF ?? 1, DEF_EXP[s] ?? 0);
+      return ctx.marketF != null ? 0.5 * model + 0.5 * Math.pow(ctx.marketF, ENV_EXP[s] ?? 0.5) : model;
+    };
 
     const proj = {};
     const all = [...STATS, ...Object.keys(COMBO)];
@@ -1877,9 +1932,9 @@ const MODEL = (() => {
       else {
         const rate = U.sum(games.map((r, i) => vals[i] * w[i])) / U.sum(games.map((r, i) => r.min * w[i]));
         mu = rate * minProj;
-        mu *= Math.pow(env, ENV_EXP[s] ?? 0.5);
+        mu *= envFor(s);
+        mu *= Math.pow(fat.effF ?? 1, EFF_EXP[s] ?? 0);
         mu *= mateFx[s] || 1;
-        if (ctx.b2b) mu *= 0.985;
       }
       // head-to-head
       const h2h = games.filter((r) => r.opp === ctx.opp);
@@ -1907,7 +1962,8 @@ const MODEL = (() => {
       variance *= 1 + 1 / Math.max(2, nEff);
       proj[s] = { mu, variance, h2hF, haF, n: games.length, nEff, vals };
     }
-    return { proj, minProj, minBase, games, cur, notes, nEff };
+    const env = {}; for (const s of STATS) env[s] = envFor(s);
+    return { proj, minProj, minBase, games, cur, notes, nEff, env, usage: usageInfo, fat, l5min: U.mean(last5.map((r) => r.min)) };
   }
 
   function probAtLeast(stat, k, mu, variance) {
@@ -2015,7 +2071,7 @@ const INTEL = (() => {
   async function logs(espnId, season, current) {
     const k = `${espnId}:${season}`;
     if (LOGS.has(k)) return LOGS.get(k);
-    const sk = 'gl:' + k;
+    const sk = 'gl2:' + k;
     const c = !NET.isDemo() && U.store.get(sk);
     const ttl = current ? 3 * 3600e3 : 5 * 864e5;
     if (c && Date.now() - c.t < ttl) { LOGS.set(k, c.r); return c.r; }
@@ -2023,13 +2079,42 @@ const INTEL = (() => {
     LOGS.set(k, r);
     if (!NET.isDemo() && r.length) {
       // compact form for storage
-      const slim = r.map(({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, stl, blk, tov, pf }) => ({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, stl, blk, tov, pf }));
+      const slim = r.map(({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, fga, fta, stl, blk, tov, pf }) => ({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, fga, fta, stl, blk, tov, pf }));
       if (!U.store.set(sk, { t: Date.now(), r: slim })) { // storage full → evict old gamelogs
-        try { Object.keys(localStorage).filter((x) => x.startsWith('ce:gl:')).slice(0, 40).forEach((x) => localStorage.removeItem(x)); } catch { }
+        try { Object.keys(localStorage).filter((x) => x.startsWith('ce:gl')).slice(0, 40).forEach((x) => localStorage.removeItem(x)); } catch { }
       }
     }
     return r;
   }
+  // ---------- team pace / efficiency ----------
+  const PACE = new Map(); // teamId → {pace, ...} | null
+  async function teamPace(teamId) {
+    if (PACE.has(teamId)) return PACE.get(teamId);
+    const c = !NET.isDemo() && U.store.get('pace:' + teamId);
+    if (c && Date.now() - c.t < 12 * 3600e3) { PACE.set(teamId, c.v); return c.v; }
+    const v = await ESPN.teamStats(teamId).catch(() => null);
+    PACE.set(teamId, v);
+    if (!NET.isDemo() && v) U.store.set('pace:' + teamId, { t: Date.now(), v });
+    return v;
+  }
+  const LG_PACE = 99.5, LG_PPP = 1.145;
+  function lgPace() { const xs = [...PACE.values()].filter(Boolean).map((v) => v.pace); return (U.sum(xs) + LG_PACE * 4) / (xs.length + 4); }
+  // possessions/game from the team stats feed, else estimated from scoring; ratings per 100 possessions
+  function teamMetrics(teamId) {
+    const st = STATE.standings, t = st?.teams?.[teamId], lgPts = st?.lgPts || 114.5;
+    const shrink = (v, prior) => (t?.gp ? (t.gp * v + 6 * prior) / (t.gp + 6) : prior);
+    const pf = t?.pf ? shrink(t.pf, lgPts) : lgPts, pa = t?.pa ? shrink(t.pa, lgPts) : lgPts;
+    const fed = PACE.get(teamId);
+    const lp = lgPace();
+    const pace = fed?.pace ? shrink(fed.pace, lp) : U.clamp(((pf + pa) / 2) / LG_PPP, 94, 106);
+    return { pace, src: fed?.pace ? 'team stats feed: FGA + 0.44·FTA − OREB + TOV' : 'estimated from scoring; team stats feed unavailable', ortg: pf / pace * 100, drtg: pa / pace * 100, pf, pa, offRank: t?.offRank, defRank: t?.defRank, gp: t?.gp || 0 };
+  }
+  function possModel(g) {
+    const h = teamMetrics(g.home.id), a = teamMetrics(g.away.id), lp = lgPace();
+    const lgRtg = (STATE.standings?.lgPts || 114.5) / lp * 100;
+    return { poss: h.pace * a.pace / lp, paceH: h.pace, paceA: a.pace, lgPace: lp, lgRtg, h, a, src: h.src };
+  }
+
   async function playerLogs(espnId, season) {
     const [a, b] = await Promise.all([logs(espnId, season, true), logs(espnId, season - 1, false)]);
     return [...a, ...b].sort((x, y) => y.date - x.date);
@@ -2061,6 +2146,7 @@ const INTEL = (() => {
       tasks.push(ESPN.summary(g.id, g).then((s) => { if (s) rec.summary = s; }).catch((e) => { rec.err = e.message; rec.sumAt = Date.now() - sumTTL + 8000; }));
     }
     tasks.push(standings());
+    tasks.push(teamPace(g.home.id), teamPace(g.away.id));
     if (!rec.rosters.home.length) tasks.push(roster(g.home.id).then((r) => (rec.rosters.home = r)));
     if (!rec.rosters.away.length) tasks.push(roster(g.away.id).then((r) => (rec.rosters.away = r)));
     await Promise.all(tasks);
@@ -2071,13 +2157,63 @@ const INTEL = (() => {
     return rec;
   }
 
+  // ---------- Phase 1: roster/injury verification (official game report only) ----------
+  function normStatus(raw, detail) {
+    const s = String(raw || '').toLowerCase(), t = s + ' ' + String(detail || '').toLowerCase();
+    if (/doubt/.test(s)) return 'DOUBTFUL';
+    if (/question|day-to-day|day to day|dtd|game.?time/.test(s)) return /minute|restrict/.test(t) ? 'MINUTES RESTRICTION' : 'QUESTIONABLE';
+    if (/probable/.test(s)) return 'PROBABLE';
+    if (/out|suspen|inactive|injured reserve/.test(s)) return 'OUT';
+    if (/minute|restrict/.test(t)) return 'MINUTES RESTRICTION';
+    return 'LISTED';
+  }
+  const reportLoaded = (rec) => !!rec?.summary && rec.summary.injuries != null;
   function injuriesFor(rec, g, side) {
-    const tid = g[side].id;
-    const list = rec.summary?.injuries?.[tid] || [];
-    const fromRoster = (rec.rosters[side] || []).filter((p) => p.inj).map((p) => ({ espnId: p.espnId, name: p.name, pos: p.pos, status: p.inj, detail: '' }));
-    const m = new Map();
-    for (const x of [...fromRoster, ...list]) m.set(x.espnId || x.name, x);
-    return [...m.values()];
+    const list = rec?.summary?.injuries?.[g[side].id] || [];
+    return list.map((x) => ({ ...x, code: normStatus(x.status, x.detail) }));
+  }
+  function statusFor(rec, g, side, espnId, name) {
+    const box = STATE.box.get(g.id);
+    const lb = box && (box.byEspn?.get(espnId) || box.players.find((x) => U.nameScore(x.name, name) >= 0.9));
+    if (lb && (lb.min > 0 || lb.oncourt || lb.played)) return { code: 'ACTIVE', ok: true, src: 'in tonight\'s live box score' };
+    if (!reportLoaded(rec)) return { code: 'UNVERIFIED', ok: false, src: 'game-day injury report not loaded yet' };
+    const r = injuriesFor(rec, g, side).find((x) => x.espnId === espnId || U.nameScore(x.name, name) >= 0.95);
+    if (r) return { code: r.code, ok: !/OUT|DOUBTFUL|LISTED/.test(r.code), src: 'official game-day injury report', raw: r.status, detail: r.detail };
+    const ro = (rec.rosters[side] || []).find((x) => x.espnId === espnId);
+    if (ro?.inj && /out|doubt/i.test(ro.inj)) return { code: 'CONFLICT', ok: false, src: `roster feed says "${ro.inj}" but the game report does not list him — props benched` };
+    return { code: 'ACTIVE', ok: true, src: 'not on the game-day injury report' };
+  }
+  // play-probability for a player's own prop (DNP risk on non-protected markets)
+  const PLAY_P = { ACTIVE: 1, PROBABLE: 0.97, QUESTIONABLE: 0.82, 'MINUTES RESTRICTION': 1 };
+  function reportSummary(rec, g, side) {
+    if (!reportLoaded(rec)) return `${g[side].abbr}: report not loaded`;
+    const l = injuriesFor(rec, g, side);
+    return `${g[side].abbr}: ${l.length ? l.map((x) => `${x.name} ${x.code}`).join(', ') : 'no designations'}`;
+  }
+
+  // ---------- Phase 2.3: schedule / travel fatigue matrix ----------
+  function fatigue(rec, g, side) {
+    const out = { known: false, minF: 1, effF: 1, marginPts: 0, flags: [] };
+    const l5 = (rec?.summary?.lastFive?.[g[side].id] || []).filter((e) => e.date && e.date < g.date - 3 * 3600e3).sort((a, b) => b.date - a.date);
+    if (!l5.length) return out;
+    out.known = true;
+    const tk = U.etDateKey(new Date(g.date));
+    const dd = (ms) => { const k = U.etDateKey(new Date(ms)); return Math.round((Date.UTC(+tk.slice(0, 4), +tk.slice(4, 6) - 1, +tk.slice(6, 8)) - Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8))) / 864e5); };
+    const venue = TEAMS.byCode[g.home.code], me = TEAMS.byCode[g[side].code];
+    const last = l5[0], since = dd(last.date);
+    const lastVenue = last.atVs === '@' ? TEAMS.find(last.opp) : me;
+    const in4 = l5.filter((e) => dd(e.date) <= 3).length + 1;
+    const road7 = l5.filter((e) => dd(e.date) <= 6 && e.atVs === '@').length + (side === 'away' ? 1 : 0);
+    const tz = Math.abs((venue?.tz ?? -5) - (lastVenue?.tz ?? -5));
+    const add = (t, minF, effF, pts) => { out.minF *= minF; out.effF *= effF; out.marginPts += pts; out.flags.push(t); };
+    if (since === 1) add('2nd night of a back-to-back (minutes ×0.965, shooting eff ×0.980, −1.5 pts margin)', 0.965, 0.98, -1.5);
+    if (in4 >= 3) add(`${in4 === 3 ? "3rd" : in4 + "th"} game in 4 nights (minutes ×0.985, eff ×0.990, −0.8 pts)`, 0.985, 0.99, -0.8);
+    if (road7 >= 5) add(`${road7}th road game in 7 nights (eff ×0.990, −0.6 pts)`, 1, 0.99, -0.6);
+    if (tz >= 2 && since <= 1) add(`${tz} time zones crossed in ≤24h (eff ×${tz >= 3 ? '0.985' : '0.990'}, −0.5 pts)`, 1, tz >= 3 ? 0.985 : 0.99, -0.5);
+    if (venue?.elev >= 4000 && g[side].code !== g.home.code) add(`visiting altitude ${venue.elev.toLocaleString()} ft (minutes ×0.990, eff ×0.985, −1.0 pts)`, 0.99, 0.985, -1.0);
+    if (since >= 3) add(`${since - 1} days rest (+0.3 pts)`, 1, 1, 0.3);
+    out.since = since; out.in4 = in4; out.road7 = road7; out.tz = tz;
+    return out;
   }
 
   async function loadPlayers(g, rec) {
@@ -2098,7 +2234,7 @@ const INTEL = (() => {
         }
       }
     }
-    const outs = { home: injuriesFor(rec, g, 'home').filter((x) => /^out/i.test(x.status)), away: injuriesFor(rec, g, 'away').filter((x) => /^out/i.test(x.status)) };
+    const outs = { home: injuriesFor(rec, g, 'home').filter((x) => /OUT|DOUBTFUL/.test(x.code)), away: injuriesFor(rec, g, 'away').filter((x) => /OUT|DOUBTFUL/.test(x.code)) };
     // logs for prop players
     const ids = [...want.keys()].filter((id) => !rec.players.has(id) || Date.now() - rec.players.get(id).at > 3 * 3600e3);
     for (let i = 0; i < ids.length; i += 4) await Promise.all(ids.slice(i, i + 4).map(async (id) => { rec.players.set(id, { ...want.get(id), logs: await playerLogs(id, season), at: Date.now() }); }));
@@ -2120,32 +2256,43 @@ const INTEL = (() => {
   function project(g, rec) {
     const season = U.seasonFor(g.dateKey);
     const pre = g.pre || MODEL.pregame(g, rec.summary, KALSHI.marketsFor(g.kkey));
+    const pm = possModel(g);
+    rec.poss = pm;
+    rec.fat = { home: fatigue(rec, g, 'home'), away: fatigue(rec, g, 'away') };
     const outs = { home: [], away: [] };
-    for (const o of rec.outLogs?.values() || []) outs[o.side].push(o);
-    const yday = U.addDaysKey(g.dateKey, -1);
+    for (const o of rec.outLogs?.values() || []) {
+      const live = injuriesFor(rec, g, o.side).find((x) => x.espnId === o.espnId);
+      if (live && /OUT|DOUBTFUL/.test(live.code)) outs[o.side].push({ ...o, w: live.code === 'OUT' ? 1 : 0.75, code: live.code });
+    }
     for (const [id, p] of rec.players) {
       const side = p.side, team = g[side], opp = g[side === 'home' ? 'away' : 'home'];
       const spreadTeam = side === 'home' ? pre.spread : -pre.spread;
       const impliedPts = (pre.total + spreadTeam) / 2;
       const avg = teamAvgPts(team.id);
-      const env = U.clamp(impliedPts / avg, 0.85, 1.15);
-      const lastDate = p.logs[0]?.date;
-      const b2b = !!lastDate && U.etDateKey(new Date(lastDate)) === yday;
-      const inj = injuriesFor(rec, g, side).find((x) => x.espnId === id || U.nameScore(x.name, p.name) >= 0.95);
-      const ctx = { season, opp: opp.code, home: side === 'home', teamCode: team.code, env, impliedPts, teamAvgPts: avg, spreadTeam, b2b, outMates: outs[side].filter((o) => o.espnId !== id), status: inj?.status || '' };
+      const hasMkt = pre.src.bookTotal != null || pre.src.kalshiTotal != null;
+      const teamPaceV = side === 'home' ? pm.paceH : pm.paceA;
+      const oppM = side === 'home' ? pm.a : pm.h;
+      const paceF = U.clamp(pm.poss / teamPaceV, 0.9, 1.1);
+      const defF = U.clamp(oppM.drtg / pm.lgRtg, 0.9, 1.1);
+      const marketF = hasMkt ? U.clamp(impliedPts / avg, 0.85, 1.15) : null;
+      const st = statusFor(rec, g, side, id, p.name);
+      const ctx = { season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
       p.ctx = ctx;
-      p.status = inj?.status || '';
+      p.st = st;
+      p.status = st.code === 'ACTIVE' ? '' : st.code;
       p.proj = MODEL.projectPlayer(p.logs, ctx);
       p.splits = splits(p.logs, season);
     }
-    // estimated primary matchup: same position group on the other team, most projected minutes
+    // estimated primary defender: same position group on the other team, most projected minutes; per-36 defensive events
+    const per36 = (q, k) => { const gm = (q.logs || []).filter((r) => r.min >= 4).slice(0, 20); const m = U.sum(gm.map((r) => r.min)); return m ? U.sum(gm.map((r) => r[k] || 0)) / m * 36 : null; };
     for (const [, p] of rec.players) {
       const grp = posGroup(p.pos);
       const oppSide = p.side === 'home' ? 'away' : 'home';
-      const cands = [...rec.players.values()].filter((q) => q.side === oppSide && posGroup(q.pos) === grp && q.proj);
+      const cands = [...rec.players.values()].filter((q) => q.side === oppSide && posGroup(q.pos) === grp && q.proj && q.st?.ok !== false);
       cands.sort((a, b) => b.proj.minProj - a.proj.minProj);
       const ro = (rec.rosters[oppSide] || []).find((q) => posGroup(q.pos) === grp && !outs[oppSide].some((o) => o.espnId === q.espnId));
-      p.matchup = cands[0] ? { name: cands[0].name, pos: cands[0].pos, est: true } : ro ? { name: ro.name, pos: ro.pos, est: true } : null;
+      const d = cands[0];
+      p.matchup = d ? { name: d.name, pos: d.pos, est: true, min: d.proj.minProj, stl36: per36(d, 'stl'), blk36: per36(d, 'blk'), pf36: per36(d, 'pf'), n: Math.min(20, d.proj.games.length) } : ro ? { name: ro.name, pos: ro.pos, est: true } : null;
     }
     rec.projAt = Date.now();
   }
@@ -2166,7 +2313,7 @@ const INTEL = (() => {
     };
   }
 
-  return { ensure, get, project, injuriesFor, matchPlayer, teamAvgPts, posGroup };
+  return { ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();
 
 /* ---- picks.js ---- */
@@ -2290,7 +2437,7 @@ const PICKS = (() => {
         const lbz = labels(m, g, best.yes);
         out.push({
           id: m.ticker + (best.yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind: 'prop', stat, side: best.yes ? 'YES' : 'NO', label: lbz.t, sub: lbz.s,
-          price: null, fair, cost: null, edge: null, lean: Math.abs(best.lean), roi: null, be: U.breakEven(fair), maxEntry: U.breakEven(Math.max(0, fair - safety)), greatEntry: U.breakEven(Math.max(0, fair - safety - 0.06)),
+          price: null, fair, cost: null, edge: null, netEdge: null, lean: Math.abs(best.lean), roi: null, be: U.breakEven(fair), fairMax: U.breakEven(fair), maxEntry: Math.min(Math.max(0, fair - 0.04), U.breakEven(Math.max(0, fair - safety))), buyMax: Math.min(Math.max(0, fair - 0.04), U.breakEven(Math.max(0, fair - safety))), greatEntry: U.breakEven(Math.max(0, fair - safety - 0.06)), scale: 0,
           kelly: 0, unc, safety, rating, tier, playable: false, modelOnly: true, lag: null, live: !ls.pre, liq: { spread: null, vol: 0, oi: 0 }, m,
           data: { player: pl, live: lb, fp: { ...best.fp, base: best.base, liveBase: !!lb } }, yes: best.yes,
         });
@@ -2306,7 +2453,7 @@ const PICKS = (() => {
     const mk = [...kmk, ...bookMarkets(g, kmk, ls)];
     const ctx = { ls, sEff: g.sEff ?? g.pre?.spread ?? 2, tEff: g.tEff ?? g.pre?.total ?? 229 };
     const now = Date.now();
-    const out = [], pending = [];
+    const out = [], pending = [], rejected = [];
     for (const m of mk) {
       if (m.yesAsk == null && m.noAsk == null) continue;
       let fp = null, kind = m.kind, why = [], data = {}, unc;
@@ -2316,15 +2463,19 @@ const PICKS = (() => {
         if (!p && m.player) { const hit = [...rec.players.values()].find((x) => U.nameScore(x.name, m.player) >= 0.8); if (hit) { p = hit; m.espnId = hit.espnId; } }
         if (!p?.proj) { pending.push(m); continue; }
         const lb = !ls.pre ? liveBoxFor(g, rec, p.espnId, p.name) : null;
+        if (!(lb && (lb.min > 0 || lb.played)) && !p.st?.ok) { rejected.push({ m, reason: `ROSTER: ${p.st?.code || 'UNVERIFIED'}` }); continue; }
         if (!lb && !ls.pre && !ls.post) { pending.push(m); continue; } // waiting on the live box score
         if (lb && !ls.post) fp = MODEL.propLiveProb(p.proj, m.stat, m.th, lb, ls);
         else if (ls.pre) fp = MODEL.propPregameProb(p.proj, m.stat, m.th);
         if (!fp) continue;
         if (fp.hit) continue;
         const nEff = p.proj.nEff;
-        unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (/question|doubt|day/i.test(p.status) ? 0.05 : 0);
-        data = { player: p, live: lb, fp };
+        const playP = lb ? 1 : (INTEL.PLAY_P[p.st?.code] ?? 1); // own DNP risk (QUESTIONABLE 0.82, PROBABLE 0.97)
+        if (playP < 1) fp = { ...fp, p: fp.p * playP };
+        unc = (lb ? 0.03 + 0.08 / Math.sqrt(nEff + 1) : 0.035 + 0.12 / Math.sqrt(nEff + 1)) + (playP < 1 ? 0.03 : 0);
+        data = { player: p, live: lb, fp, playP };
       } else if (['ml', 'spread', 'total', 'teamtotal', 'margin', 'ot'].includes(m.kind)) {
+        if (!INTEL.reportLoaded(rec)) { rejected.push({ m, reason: 'ROSTER: game-day injury report not loaded' }); continue; }
         fp = MODEL.lineProb(m, g, ctx);
         if (!fp) continue;
         unc = (ls.pre ? 0.02 : 0.025) + (m.seg ? 0.01 : 0);
@@ -2361,34 +2512,47 @@ const PICKS = (() => {
       fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
       data.fp = fp;
 
+      // trend sanitization inputs (props): hit history at this threshold vs the context-adjusted projection
+      let trend = null;
+      if (m.kind === 'prop' && m.th?.k != null && !data.live) {
+        const pr = data.player.proj, hh = MODEL.hitHistory(pr.games, m.stat, m.th.k, data.player.ctx.season);
+        const muAdj = pr.proj[m.stat]?.mu;
+        if (hh && muAdj != null) trend = { hh, muAdj, l10: hh.l10.n ? hh.l10.h / hh.l10.n : 0, regress: isFinite(hh.avg10) && muAdj < hh.avg10 * 0.95 };
+      }
       for (const yes of [true, false]) {
         if (m.kind === 'prop' && (!yes || m.th?.op === '<')) continue; // player props: overs only (buy YES on "X+")
         const price = yes ? m.yesAsk : m.noAsk;
         if (price == null || price <= 0.02 || price >= 0.96) continue; // no value in 97¢+ contracts
-        const fair = yes ? fp.p : 1 - fp.p;
-        const cost = price + (m.book ? 0 : U.fee(price)); // sportsbook prices already include the vig
-        const edge = fair - cost;
+        const fair = yes ? fp.p : 1 - fp.p;                 // algorithmic true winning probability
+        const implied = price;                               // market implied winning probability (ask / book price)
+        const netEdge = fair - implied;
+        const fee = m.book ? 0 : U.fee(price);               // sportsbook prices already include the vig
+        const cost = price + fee, ev = fair - cost, roi = ev / cost;
         const safety = unc * 0.8 + 0.005;
         const BE = m.book ? (x) => U.clamp(x, 0, 1) : U.breakEven;
-        const be = BE(fair), maxEntry = BE(Math.max(0, fair - safety)), greatEntry = BE(Math.max(0, fair - safety - 0.06));
-        const roi = edge / cost;
-        const kelly = edge > 0 ? Math.max(0, (fair - cost) / (1 - cost)) * 0.25 : 0;
+        const fairMax = BE(fair);                            // above this: negative EV after fees
+        const buyMax = Math.min(Math.max(0, fair - 0.04), BE(Math.max(0, fair - safety))); // ≥4.00 pts edge and model-error margin
+        const kellyFull = ev > 0 ? ev / (1 - cost) : 0;
+        const scale = Math.round(U.clamp((kellyFull * 0.25) / 0.03 * 10 * (1 - Math.min(0.5, unc * 3)), 0, 10) * 10) / 10;
+        // ---- Phase 2 gates ----
+        let reason = null;
+        if (netEdge < 0.04 || ev <= 0) reason = `EDGE ${U.signed(netEdge * 100, 2)}% < +4.00% minimum`;
+        else if (fair < 0.30 && !(netEdge >= 0.10 && roi >= 0.6)) reason = `TRUE PROBABILITY ${(fair * 100).toFixed(2)}% < 30.00% floor`;
+        else if (trend && trend.l10 >= 0.7 && trend.regress) reason = `TREND SANITIZED: L10 ${trend.hh.l10.h}/${trend.hh.l10.n} but projection ${trend.muAdj.toFixed(1)} < 95% of L10 avg ${trend.hh.avg10.toFixed(1)}`;
         const spreadW = m.book ? 0.04 : m.yesAsk != null && m.yesBid != null ? m.yesAsk - m.yesBid : 0.1;
-        // raw score: edge beyond the safety margin (in 5¢ units) + confidence + data/liquidity quality
-        let raw = 62 + 14 * ((edge - safety) / 0.05) + 10 * (fair - 0.5);
+        let raw = 62 + 14 * ((netEdge - Math.max(0.04, safety)) / 0.05) + 10 * (fair - 0.5);
         if (data.player) raw += data.player.proj.nEff >= 15 ? 3 : data.player.proj.nEff < 6 ? -6 : 0;
         if (spreadW > 0.06) raw -= 6; if (m.vol < 50) raw -= 4;
         if (lag && Math.sign(move) === (yes ? 1 : -1)) raw += 4;
-        if (fair < 0.12) raw -= 8; // long shots need more proof
-        if (Math.abs(gap) > 0.25) raw -= 8; // huge model/market gaps usually mean missing news
-        // diminishing returns toward 99
-        let rating = Math.round(U.clamp(40 + 59 * (1 - Math.exp(-Math.max(0, raw - 40) / 30)), 30, 99));
+        if (Math.abs(gap) > 0.25) raw -= 8;
+        const rating = Math.round(U.clamp(40 + 59 * (1 - Math.exp(-Math.max(0, raw - 40) / 30)), 30, 99));
         const tier = rating >= 90 ? 'HOF' : rating >= 83 ? 'GOLD' : rating >= 76 ? 'SILVER' : rating >= 70 ? 'BRONZE' : '';
         const lb = labels(m, g, yes);
         out.push({
           id: m.ticker + (yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind, seg: m.seg, stat: m.stat, side: yes ? 'YES' : 'NO',
-          label: lb.t, sub: lb.s, price, fair, cost, edge, roi, be, maxEntry, greatEntry, kelly, unc, safety, rating, tier,
-          playable: edge >= Math.max(PLAY_MIN, safety) && price <= maxEntry + 1e-9,
+          label: lb.t, sub: lb.s, price, implied, fair, netEdge, edge: netEdge, ev, cost, fee, roi, be: fairMax, fairMax, maxEntry: buyMax, buyMax, kelly: kellyFull * 0.25, scale, unc, safety, rating, tier,
+          survivor: !reason, reason, trend,
+          playable: !reason && price <= buyMax + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
           live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
         });
@@ -2397,11 +2561,14 @@ const PICKS = (() => {
     // keep the better side per market for ranking
     const best = new Map();
     for (const p of out) { const b = best.get(p.ticker); if (!b || p.edge > b.edge) best.set(p.ticker, p); }
-    const picks = [...best.values()].sort((a, b) => b.rating - a.rating || b.edge - a.edge);
+    const picks = [...best.values()].sort((a, b) => (b.survivor - a.survivor) || b.netEdge - a.netEdge);
+    const survivors = picks.filter((p) => p.survivor);
+    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, roster: rejected.length };
+    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; }
     const pricedKeys = new Set(picks.filter((p) => p.kind === 'prop').map((p) => `${p.data.player.espnId}:${p.stat}`));
     const models = modelPicks(g, rec, ls, pricedKeys);
     updateFeed(g, picks);
-    return { picks, models, all: out, pending, at: now };
+    return { picks, survivors, audit, rejected, models, all: out, pending, at: now };
   }
 
   function updateFeed(g, picks) {
@@ -2422,85 +2589,259 @@ const PICKS = (() => {
     persist();
   }
 
-  // ---- evidence ("why") bullets ----
-  function evidence(p, g) {
-    const out = [];
+  // ---- Phase 3 evidence: four quantified sections + verified roster line ----
+  const P2 = (x) => (x == null || !isFinite(x) ? '—' : (x * 100).toFixed(2) + '%');
+  const f3 = (x) => (x == null || !isFinite(x) ? '—' : x.toFixed(3));
+  const f1 = (x) => (x == null || !isFinite(x) ? '—' : x.toFixed(1));
+  const NA = 'not in public feed — not applied';
+  function statusLine(p, g) {
     const rec = INTEL.get(g.id);
-    const ls = g.ls;
+    const rep = `${INTEL.reportSummary(rec, g, 'away')}; ${INTEL.reportSummary(rec, g, 'home')}${rec?.sumAt ? ` (report pulled ${U.ago(rec.sumAt)})` : ''}`;
+    if (p.kind === 'prop' && !p.modelOnly) {
+      const pl = p.data.player, st = pl.st || {};
+      return `${pl.name}: ${st.code || 'UNVERIFIED'} — ${st.src || ''}${st.detail ? ` (${st.detail})` : ''}${p.data.playP < 1 ? `; DNP risk priced at ${P2(1 - p.data.playP)}` : ''}. Game report — ${rep}.`;
+    }
+    if (p.modelOnly) { const pl = p.data.player, st = pl.st || {}; return `${pl.name}: ${st.code || 'UNVERIFIED'} — ${st.src || ''}. Game report — ${rep}.`; }
+    return `Game report — ${rep}. Players not listed are treated as fully active.`;
+  }
+  function evidence(p, g) {
+    const rec = INTEL.get(g.id), ls = g.ls, m = p.m;
+    const pm = rec?.poss || INTEL.possModel(g);
+    const sec = { arb: [], pace: [], rot: [], match: [] };
+    const priceTxt = p.price == null ? 'No live price' : p.book ? `${p.book} ${fmtAm(p.am)} → ${P2(p.implied)}` : `Kalshi ask $${p.price.toFixed(2)} → ${P2(p.implied)}`;
     if (p.kind === 'prop') {
-      const pl = p.data.player, pr = pl.proj, m = p.m;
-      const st = m.stat, S = MODEL.SHORT[st] || st;
-      const k = m.th?.k;
-      const fp = p.data.fp;
+      const pl = p.data.player, pr = pl.proj, st = m.stat, S = MODEL.SHORT[st] || st, k = m.th?.k, fp = p.data.fp, cx = pl.ctx || {};
+      const prj = pr.proj[st] || {}, sd = fp.sd || Math.sqrt(prj.variance || 0), mu = fp.mu ?? prj.mu;
+      // ---- DISCREPANCY ARBITRAGE ----
+      if (!p.modelOnly) {
+        const mktMu = sd > 0 ? (k - 0.5) - sd * U.normInv(1 - p.price) : null;
+        sec.arb.push(`${priceTxt}. Model P(${S} ≥ ${k}) = ${P2(fp.pModel ?? fp.p)} from a ${f1(mu)} ± ${f1(sd)} projection${fp.mmid != null && fp.wModel < 1 ? `; market-prior blend (${Math.round((1 - fp.wModel) * 100)}% weight on mid ${P2(fp.mmid)})` : ''} → true ${P2(p.fair)}.`);
+        if (mktMu != null && isFinite(mktMu)) sec.arb.push(`The ask prices a ${f1(mktMu)} ${S} mean under the same σ; the model projects ${f1(mu)} (${U.signed(mu - mktMu, 1)}).`);
+        sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; after the ${m.book ? 'book vig' : `$${p.fee.toFixed(3)} taker fee`} EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 contract (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      } else {
+        sec.arb.push(`No live Kalshi quote on this line: model ${P2(fp.p)} vs ${fp.liveBase ? 'pregame model' : 'season-average baseline'} ${P2(fp.base)}. Not edge-verified; buy only at ≤ $${p.maxEntry.toFixed(2)}.`);
+      }
+      const hh = p.trend?.hh || MODEL.hitHistory(pr.games, st, k, cx.season);
+      if (hh) sec.arb.push(`Trend audit at ${k}+: L5 ${hh.l5.h}/${hh.l5.n}, L10 ${hh.l10.h}/${hh.l10.n}, L20 ${hh.l20.h}/${hh.l20.n}; L10 avg ${f1(hh.avg10)} vs projection ${f1(prj.mu)} — ${prj.mu >= hh.avg10 * 0.95 ? 'no regression conflict' : 'projection below the trend (trend carries no weight)'}.`);
+      if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after ${pl.name}'s stat moved ${p.lag.sinceScore}s ago; fair value shifted ${U.signed(p.lag.move * 100, 1)} pts.`);
+      if (p.delayed) sec.arb.push(`Price from the published Kalshi feed, ${U.ago(m.snapAt)}; uncertainty widened by ${f1(Math.min(4, 1.2 * p.delayed))} pts.`);
+      // ---- POSSESSION & PACE MODEL ----
+      const team = g[pl.side], opp = g[pl.side === 'home' ? 'away' : 'home'];
+      if (cx.poss) sec.pace.push(`Projected possessions ${f1(cx.poss)} = ${team.abbr} ${f1(cx.teamPace)} × ${opp.abbr} ${f1(pl.side === 'home' ? pm.paceA : pm.paceH)} ÷ league ${f1(pm.lgPace)} (${pm.src}). ${team.abbr} baseline ${f1(cx.teamPace)} → volume ×${f3(cx.paceF)}.`);
+      if (cx.defF) sec.pace.push(`${opp.abbr} allows ${f1(cx.oppDrtg)} pts/100 poss vs league ${f1(cx.lgRtg)} → efficiency ×${f3(cx.defF)} (applied to PTS ×1.0, 3PM ×0.8, AST ×0.5).`);
+      if (cx.marketF != null) sec.pace.push(`Market-implied ${team.abbr} total ${f1(cx.impliedPts)} vs ${f1(cx.teamAvgPts)} season avg (×${f3(cx.marketF)}); blended 50/50 → ${S} environment ×${f3(pr.env?.[MODEL.COMBO[st] ? 'pts' : st])}.`);
+      if (!ls.pre && ls.elapsed > 2) sec.pace.push(`Live: ${ls.total} pts in ${f1(ls.elapsed)} min = ${f1(ls.total / ls.elapsed * 48)} pts/48 vs pregame total ${f1(g.pre?.total)}; ${f1(ls.rem)} min remaining.`);
+      sec.pace.push(`Home/away pace variance and half-court vs transition splits: ${NA}.`);
+      // ---- ROTATIONAL & USAGE MATH ----
       if (p.data.live) {
         const lb = p.data.live;
-        out.push({ k: 'live', t: `Live: ${fp.cur} ${S} in ${lb.min.toFixed(0)} min (${lb.pf} PF${lb.oncourt ? ', on court' : ', on bench'}) → needs ${Math.max(0, (k ?? 0) - fp.cur)} more in ~${fp.r.toFixed(1)} projected min` });
-        for (const n of fp.notes || []) out.push({ k: 'risk', t: n });
+        sec.rot.push(`Live: ${fp.cur} ${S} in ${f1(lb.min)} min, ${lb.pf} PF, ${lb.oncourt ? 'on court' : 'on bench'}; needs ${Math.max(0, (k ?? 0) - fp.cur)} more in ${f1(fp.r)} projected remaining min.`);
+        for (const n of fp.notes || []) sec.rot.push(n + '.');
       }
-      const sd = Math.sqrt(pr.proj[st]?.variance ?? 0);
-      if (pr.proj[st]) out.push({ k: 'proj', t: `Projection ${pr.proj[st].mu.toFixed(1)} ${S} (±${sd.toFixed(1)}) on ${pr.minProj.toFixed(1)} min vs line ${k != null ? k + '+' : '—'}` });
-      const hh = MODEL.hitHistory(pr.games, st, k, pl.ctx.season);
-      if (hh) {
-        const r = (o) => `${o.h}/${o.n}`;
-        out.push({ k: 'hits', t: `Hit ${k}+: L5 ${r(hh.l5)} · L10 ${r(hh.l10)} · L20 ${r(hh.l20)}${hh.season.n ? ' · this season ' + r(hh.season) : ''}` });
-        if (Math.abs(hh.streak) >= 3) out.push({ k: 'streak', t: hh.streak > 0 ? `Streak: hit ${k}+ in ${hh.streak} straight` : `Streak: missed ${k}+ in ${-hh.streak} straight` });
-        out.push({ k: 'form', t: `Last 10: ${hh.last.join(', ')} (avg L5 ${hh.avg5.toFixed(1)}, L10 ${hh.avg10.toFixed(1)})` });
-      }
-      const h2h = pr.games.filter((r) => r.opp === pl.ctx.opp).slice(0, 5);
-      if (h2h.length) out.push({ k: 'h2h', t: `vs ${pl.ctx.opp} (last ${h2h.length}): ${h2h.map((r) => MODEL.statVal(r, st)).join(', ')} ${S}${pr.proj[st]?.h2hF && Math.abs(pr.proj[st].h2hF - 1) > 0.01 ? ` → ${U.signed((pr.proj[st].h2hF - 1) * 100, 0)}% adj` : ''}` });
-      const oppT = STATE.standings?.teams?.[g[pl.side === 'home' ? 'away' : 'home'].id];
-      if (oppT?.pa) out.push({ k: 'def', t: `${pl.ctx.opp} defense: ${oppT.pa.toFixed(1)} pts allowed/g (#${oppT.defRank} of 30)${pl.matchup ? ` · likely matchup ${pl.matchup.name}${pl.matchup.pos ? ' (' + pl.matchup.pos + ')' : ''}` : ''}` });
-      const spl = pl.splits;
-      const key = ['pts', 'reb', 'ast', 'fg3m'].includes(st) ? st : 'pts';
-      if (spl?.home && spl?.away) out.push({ k: 'split', t: `Home ${spl.home[key].toFixed(1)} / Away ${spl.away[key].toFixed(1)} ${MODEL.SHORT[key]}${spl.topD && spl.botD ? ` · vs top-10 D ${spl.topD[key].toFixed(1)} / bottom-10 D ${spl.botD[key].toFixed(1)}` : ''}` });
-      if (spl?.b2b && spl.b2b.n >= 3 && spl?.rested) out.push({ k: 'rest', t: `On 0 days rest ${spl.b2b[key].toFixed(1)} vs rested ${spl.rested[key].toFixed(1)} ${MODEL.SHORT[key]} (n=${spl.b2b.n})` });
-      for (const n of pr.notes) out.push({ k: n.k, t: n.t });
-      if (fp.mmid != null && fp.wModel < 1) out.push({ k: 'blend', t: `Model ${U.pct(fp.pModel)} · market mid ${U.pct(fp.mmid)} → confidence ${U.pct(fp.p)} (market prior weight ${Math.round((1 - fp.wModel) * 100)}%${fp.wModel >= 0.85 ? ', quote is stale' : ''})` });
-      if (Math.abs(fp.gap || 0) > 0.25) out.push({ k: 'risk', t: `Model and market disagree by ${Math.round(Math.abs(fp.gap) * 100)} pts — check injury news and minutes before trusting this one` });
-      if (pl.status) out.push({ k: 'risk', t: `Injury report: ${pl.status} — check the market's no-play rules before entering` });
-      if (pr.nEff < 8) out.push({ k: 'risk', t: `Thin sample (${pr.games.length} games) — wider safety margin applied` });
+      sec.rot.push(`Minutes ${f1(pr.minProj)} projected (weighted ${f1(pr.minBase)}, L5 ${f1(pr.l5min)}).`);
+      const fat = pr.fat || cx.fat;
+      sec.rot.push(fat?.known ? (fat.flags.length ? `Fatigue matrix: ${fat.flags.join('; ')}.` : `Fatigue matrix: ${fat.since - 1} days rest, ${fat.in4} games in 4 nights, ${fat.road7} road games in 7, ${fat.tz} time-zone shift — no penalty.`) : 'Fatigue matrix: schedule not loaded — no penalty applied.');
+      const u = pr.usage || {};
+      if (u.all != null) sec.rot.push(`Usage proxy (FGA + 0.44·FTA + TOV)/min: ${f3(u.all)} (L5 ${f3(u.l5)}).`);
+      for (const x of u.mates || []) sec.rot.push(`Without ${x.name} (${x.code}, official; ${x.n} games): usage ${f3(x.without)}/min vs ${f3(x.with)} with (${U.signed((x.without / x.with - 1) * 100, 1)}%).`);
+      for (const n of pr.notes.filter((n) => n.k === 'inj' || n.k === 'blowout')) sec.rot.push(n.t + '.');
+      sec.rot.push(`Minutes restriction: ${pl.st?.code === 'MINUTES RESTRICTION' ? 'listed on the game report' : 'none listed on the game report'}. Coaching rotation quotes / minute caps: ${NA}.`);
+      // ---- MATCHUP & DEFENSIVE AUDIT ----
+      const d = pl.matchup;
+      if (d) sec.match.push(d.stl36 != null ? `Estimated primary defender ${d.name} (${d.pos || '—'}, ${f1(d.min)} proj min): ${f1(d.stl36)} STL, ${f1(d.blk36)} BLK, ${f1(d.pf36)} PF per 36 over his last ${d.n}.` : `Estimated primary defender ${d.name} (${d.pos || '—'}); defensive logs not loaded.`);
+      sec.match.push(`${opp.abbr} team defense ${f1(cx.oppDrtg)} pts/100 poss${cx.oppDefRank ? ` (#${cx.oppDefRank} in points allowed)` : ''}.`);
+      const h2h = pr.games.filter((r) => r.opp === cx.opp).slice(0, 5);
+      if (h2h.length) sec.match.push(`vs ${cx.opp} last ${h2h.length}: ${h2h.map((r) => MODEL.statVal(r, st)).join(', ')} ${S}${prj.h2hF && Math.abs(prj.h2hF - 1) > 0.005 ? ` → ×${f3(prj.h2hF)}` : ' (no adjustment)'}.`);
+      const spl = pl.splits, key = ['pts', 'reb', 'ast', 'fg3m'].includes(st) ? st : 'pts';
+      if (spl?.topD && spl?.botD) sec.match.push(`vs top-10 defenses ${f1(spl.topD[key])} (n=${spl.topD.n}) / bottom-10 ${f1(spl.botD[key])} (n=${spl.botD.n}) ${MODEL.SHORT[key]}; home ${f1(spl.home?.[key])} / away ${f1(spl.away?.[key])}.`);
+      sec.match.push(`Individual defensive rating, block/steal %, archetype containment, zone and play-type defense: ${NA}.`);
     } else {
-      const pre = g.pre?.src || {};
+      // ---- game lines ----
+      const pre = g.pre?.src || {}, fp = p.data.fp;
       const bits = [];
-      if (pre.bookSpread != null) bits.push(`${pre.book || 'Book'} ${pre.bookSpread >= 0 ? g.home.abbr + ' −' + pre.bookSpread.toFixed(1) : g.away.abbr + ' −' + (-pre.bookSpread).toFixed(1)}`);
+      if (pre.bookSpread != null) bits.push(`${pre.book || 'book'} ${pre.bookSpread >= 0 ? g.home.abbr : g.away.abbr} −${Math.abs(pre.bookSpread).toFixed(1)}`);
       if (pre.bookTotal) bits.push(`O/U ${pre.bookTotal}`);
-      if (pre.bookP != null) bits.push(`no-vig ML ${U.pct(pre.bookP)} ${g.home.abbr}`);
-      if (pre.bpi != null) bits.push(`ESPN BPI ${U.pct(pre.bpi)}`);
-      if (pre.kalshiSpread != null) bits.push(`Kalshi ladder ${U.signed(pre.kalshiSpread, 1)}`);
-      if (bits.length) out.push({ k: 'cons', t: 'Pregame consensus: ' + bits.join(' · ') });
-      const fp = p.data.fp;
-      if (p.kind === 'total') out.push({ k: 'proj', t: `Projected total ${fp.mu.toFixed(1)} ± ${fp.sd.toFixed(1)}${ls && !ls.pre ? ` (now ${ls.total}, ${ls.rem.toFixed(1)} min left)` : ''}` });
-      else if (fp.mu != null) out.push({ k: 'proj', t: `Projected ${p.kind === 'spread' ? g[p.m.side].abbr + ' margin' : 'home margin'} ${U.signed(fp.mu, 1)} ± ${fp.sd.toFixed(1)}` });
-      if (ls && !ls.pre) {
-        out.push({ k: 'live', t: `Live: ${g.away.abbr} ${g.away.score}–${g.home.score} ${g.home.abbr}, ${U.periodShort(ls.period)} ${U.fmtClock(ls.clockSec)}${g.espnWP != null ? ` · ESPN WP ${U.pct(g.espnWP)} ${g.home.abbr}` : ''}` });
-        if (g.run && g.run.pts >= 6) out.push({ k: 'mom', t: `Momentum: ${g[g.run.side].abbr} on a ${g.run.pts}–${g.run.opp} run` });
-        if (g.sMkt != null) out.push({ k: 'cal', t: `Market-calibrated strength ${U.signed(g.sMkt, 1)} vs pregame ${U.signed(g.pre.spread, 1)} (blend used: ${U.signed(g.sEff, 1)})` });
+      if (pre.bookP != null) bits.push(`no-vig ML ${P2(pre.bookP)} ${g.home.abbr}`);
+      if (pre.bpi != null) bits.push(`ESPN BPI ${P2(pre.bpi)}`);
+      if (pre.kalshiSpread != null) bits.push(`Kalshi spread ladder ${U.signed(pre.kalshiSpread, 1)}`);
+      if (pre.kalshiTotal != null) bits.push(`Kalshi total ladder ${f1(pre.kalshiTotal)}`);
+      sec.arb.push(`${priceTxt}. Model ${P2(p.fair)} (${fp.mu != null ? `mean ${U.signed(fp.mu, 1)} ± ${f1(fp.sd)}` : 'segment model'}). Consensus inputs: ${bits.join(', ') || 'Kalshi prices only'}.`);
+      sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after a score ${p.lag.sinceScore}s ago; fair value moved ${U.signed(p.lag.move * 100, 1)} pts.`);
+      if (p.delayed) sec.arb.push(`Price from the published Kalshi feed, ${U.ago(m.snapAt)}.`);
+      sec.pace.push(`Projected possessions ${f1(pm.poss)} = ${g.home.abbr} ${f1(pm.paceH)} × ${g.away.abbr} ${f1(pm.paceA)} ÷ league ${f1(pm.lgPace)} (${pm.src}). Consensus total ${f1(g.pre?.total)}; model total ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).mu)} ± ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).sd)}.`);
+      if (!ls.pre && ls.elapsed > 2) sec.pace.push(`Live: ${g.away.abbr} ${g.away.score}–${g.home.score} ${g.home.abbr}, ${U.periodShort(ls.period)} ${U.fmtClock(ls.clockSec)}; ${f1(ls.total / ls.elapsed * 48)} pts/48${g.run && g.run.pts - g.run.opp >= 6 ? `; ${g[g.run.side].abbr} ${g.run.pts}–${g.run.opp} run` : ''}.`);
+      for (const side of ['away', 'home']) {
+        const l = INTEL.injuriesFor(rec, g, side).filter((x) => /OUT|DOUBTFUL/.test(x.code));
+        sec.rot.push(`${g[side].abbr}: ${l.length ? l.map((x) => `${x.name} ${x.code}`).join(', ') : 'no OUT/DOUBTFUL designations'}.`);
       }
-      const inj = rec ? [...INTEL.injuriesFor(rec, g, 'home'), ...INTEL.injuriesFor(rec, g, 'away')].filter((x) => /out/i.test(x.status)) : [];
-      if (inj.length) out.push({ k: 'inj', t: 'Out: ' + inj.slice(0, 6).map((x) => x.name).join(', ') });
-      const st = STATE.standings?.teams;
-      const h = st?.[g.home.id], a = st?.[g.away.id];
-      if (h?.pf && a?.pf) out.push({ k: 'def', t: `Off/Def ppg — ${g.away.abbr} ${a.pf.toFixed(1)}/${a.pa.toFixed(1)} (#${a.offRank}/#${a.defRank}) · ${g.home.abbr} ${h.pf.toFixed(1)}/${h.pa.toFixed(1)} (#${h.offRank}/#${h.defRank})` });
+      const fh = g.fat?.home, fa = g.fat?.away;
+      if (fh?.known || fa?.known) sec.rot.push(`Fatigue matrix — ${g.away.abbr}: ${fa?.flags.length ? fa.flags.join('; ') : 'none'}; ${g.home.abbr}: ${fh?.flags.length ? fh.flags.join('; ') : 'none'}. Differential ${U.signed(g.fatAdj * 2, 1)} pts, applied at 50% weight (${U.signed(g.fatAdj, 1)}) because the consensus partly prices rest.`);
+      if (g.sMkt != null) sec.rot.push(`Live strength re-anchored to the market in quiet stretches: ${U.signed(g.sMkt, 1)} vs pregame ${U.signed(g.pre.spread, 1)} → ${U.signed(g.sEff, 1)} used.`);
+      const h = pm.h, a = pm.a;
+      sec.match.push(`Per 100 possessions — ${g.away.abbr} O ${f1(a.ortg)} / D ${f1(a.drtg)}${a.defRank ? ` (#${a.offRank}/#${a.defRank})` : ''}; ${g.home.abbr} O ${f1(h.ortg)} / D ${f1(h.drtg)}${h.defRank ? ` (#${h.offRank}/#${h.defRank})` : ''}; league ${f1(pm.lgRtg)}.`);
+      const ser = rec?.summary?.series;
+      if (ser?.events?.length) sec.match.push(`Season series: ${ser.events.map((e) => `${e.away} ${e.as}–${e.hs} ${e.home}`).join(', ')}.`);
+      sec.match.push(`Zone and play-type team defense: ${NA}.`);
     }
-    if (p.lag) out.unshift({ k: 'lag', t: `Stale price: quote unchanged ${p.lag.sec}s while the score moved ${p.lag.sinceScore}s ago — fair value moved ${U.signed(p.lag.move * 100, 1)}¢` });
-    const m = p.m;
-    if (p.modelOnly) {
-      const fp = p.data.fp, pYes = fp.p, bYes = fp.base;
-      out.unshift({ k: 'proj', t: fp.liveBase ? `Live model ${U.pct(p.yes ? pYes : 1 - pYes)} vs pregame model ${U.pct(p.yes ? bYes : 1 - bYes)} (live swing ${U.signed(p.lean * 100, 1)} pts)` : `Model ${U.pct(p.yes ? pYes : 1 - pYes)} vs season-average baseline ${U.pct(p.yes ? bYes : 1 - bYes)} (context lean ${U.signed(p.lean * 100, 1)} pts)` });
-      out.push({ k: 'mkt', t: `No live Kalshi price loaded for this line. On Kalshi or Robinhood, buy ${p.side} on "${m.sub}" only at ≤ ${U.cents(p.maxEntry)} (great ≤ ${U.cents(p.greatEntry)}).` });
-    } else if (p.book) {
-      out.push({ k: 'mkt', t: `${m.sub}. Price ${fmtAm(p.am)} = ${U.cents(p.price)} implied (vig included). Kalshi had no open market for this line.` });
-    } else {
-      out.push({ k: 'mkt', t: `Kalshi ${m.ticker}: bid ${U.cents(m.yesBid)} / ask ${U.cents(m.yesAsk)} YES · vol ${Math.round(m.vol).toLocaleString()} · OI ${Math.round(m.oi).toLocaleString()} · ${m.snapAt ? 'price as of ' + U.ago(m.snapAt) : 'requoted ' + U.ago(m.quoteAt)}` });
-      if (m.snapAt) out.push({ k: 'risk', t: `Delayed Kalshi feed (${U.ago(m.snapAt)}). Confirm the live price on Kalshi is still at or below ${U.cents(p.maxEntry)} before entering.` });
-    }
-    return out;
+    return {
+      status: statusLine(p, g),
+      sections: [
+        { k: 'arb', title: 'DISCREPANCY ARBITRAGE', t: sec.arb.join(' ') },
+        { k: 'pace', title: 'POSSESSION & PACE MODEL', t: sec.pace.join(' ') },
+        { k: 'rot', title: 'ROTATIONAL & USAGE MATH', t: sec.rot.join(' ') },
+        { k: 'match', title: 'MATCHUP & DEFENSIVE AUDIT', t: sec.match.join(' ') },
+      ],
+    };
   }
 
   function feed(gameId) { return [...(FEED.get(gameId)?.values() || [])].sort((a, b) => b.firstSeen - a.firstSeen); }
   function allFeed() { const o = []; for (const f of FEED.values()) o.push(...f.values()); return o.sort((a, b) => b.firstSeen - a.firstSeen); }
 
-  return { evaluate, evidence, feed, allFeed, labels, fmtAm };
+  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm };
+})();
+
+/* ---- parlay.js ---- */
+/* ============================================================
+   parlay.js — Section 2: optimal 2-/3-leg parlays built only
+   from Section 1 survivors. Joint probability via a Gaussian
+   copula on each leg's true probability with rule-based pairwise
+   correlations; negative or redundant pairs are barred.
+   ============================================================ */
+
+const PARLAY = (() => {
+  const LINE = new Set(['ml', 'spread', 'total', 'teamtotal', 'margin', 'ot']);
+  // bivariate normal CDF Φ2(a, b; r) by integrating φ(x)·Φ((b − r x)/√(1−r²)) over x ≤ a (Simpson, 240 steps)
+  function bvn(a, b, r) {
+    if (Math.abs(r) < 1e-6) return U.normCdf(a) * U.normCdf(b);
+    r = U.clamp(r, -0.95, 0.95);
+    const lo = -8, hi = Math.min(a, 8), n = 240, h = (hi - lo) / n, sq = Math.sqrt(1 - r * r);
+    if (hi <= lo) return 0;
+    let s = 0;
+    for (let i = 0; i <= n; i++) {
+      const x = lo + i * h, f = Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI) * U.normCdf((b - r * x) / sq);
+      s += f * (i === 0 || i === n ? 1 : i % 2 ? 4 : 2);
+    }
+    return U.clamp(s * h / 3, 0, Math.min(U.normCdf(a), U.normCdf(b)));
+  }
+  const memo = new Map();
+  const joint2 = (pa, pb, r) => {
+    const k = `${pa.toFixed(4)}|${pb.toFixed(4)}|${r.toFixed(3)}`;
+    if (memo.has(k)) return memo.get(k);
+    const v = bvn(U.normInv(pa), U.normInv(pb), r);
+    if (memo.size > 5000) memo.clear();
+    memo.set(k, v);
+    return v;
+  };
+
+  // describe a leg's direction for correlation rules
+  function legOf(p, g) {
+    const m = p.m;
+    const L = { p, g, gameId: p.gameId, fam: p.kind === 'prop' ? 'prop' : 'line', kind: p.kind, seg: !!m.seg, ticker: p.ticker };
+    if (p.kind === 'prop') { L.player = p.data.player.espnId; L.team = p.data.player.side; L.stat = m.stat; L.name = p.data.player.name; }
+    else if (['ml', 'spread', 'margin'].includes(p.kind)) L.team = p.yes ? m.side : (m.side === 'home' ? 'away' : 'home');
+    else if (p.kind === 'teamtotal') { L.team = m.side; L.over = p.yes; }
+    else if (p.kind === 'total') L.over = p.yes;
+    else if (p.kind === 'ot') L.over = p.yes;
+    return L;
+  }
+  const PTS_LIKE = { pts: 1, pra: 1, pa: 0.9, pr: 0.85, ast: 0.6, fg3m: 0.6, reb: 0.4, ra: 0.5, stl: 0.2, blk: 0.2 };
+  // correlation between the two legs' success events; null = barred pairing; reason string for the report
+  function rho(a, b) {
+    if (a.gameId !== b.gameId) return { r: 0, why: 'separate games — independent' };
+    if (a.ticker === b.ticker) return null;
+    const seg = a.seg || b.seg ? 0.5 : 1;
+    if (a.fam === 'prop' && b.fam === 'prop') {
+      if (a.player === b.player) return null; // same player stacking: redundant exposure
+      if (a.team === b.team) {
+        if ((a.stat === 'ast' && /pts|pra|pa|fg3m/.test(b.stat)) || (b.stat === 'ast' && /pts|pra|pa|fg3m/.test(a.stat))) return { r: 0.12, why: 'teammate assist ↔ teammate scoring share the same made baskets' };
+        if (a.stat === 'reb' && b.stat === 'reb') return { r: -0.06, why: 'teammates compete for the same rebounds' };
+        if (/pts|pra/.test(a.stat) && /pts|pra/.test(b.stat)) return { r: -0.05, why: 'teammates compete for the same shot volume' };
+        return { r: 0.02, why: 'teammates — shared minutes environment' };
+      }
+      if (/pts|pra|pa|fg3m/.test(a.stat) && /pts|pra|pa|fg3m/.test(b.stat)) return { r: 0.06, why: 'opposing scorers share the possession count' };
+      return { r: 0.03, why: 'opposing players share the possession count' };
+    }
+    const prop = a.fam === 'prop' ? a : b.fam === 'prop' ? b : null, line = prop === a ? b : a;
+    if (prop) {
+      const w = PTS_LIKE[prop.stat] ?? 0.4;
+      if (line.kind === 'total') return { r: (line.over ? 0.25 : -0.25) * w * seg, why: line.over ? `game Over and ${prop.name} ${MODEL.SHORT[prop.stat]} both scale with possessions and scoring efficiency` : `game Under suppresses ${prop.name}'s volume (counter-acting script)` };
+      if (line.kind === 'teamtotal') return { r: (line.team === prop.team ? (line.over ? 0.35 : -0.35) : (line.over ? 0.05 : -0.05)) * w * seg, why: line.team === prop.team ? `${prop.name} is a direct component of the team total` : 'opponent team total — pace link only' };
+      if (line.kind === 'ot') return { r: line.over ? 0.05 : 0, why: 'overtime adds 5 minutes of volume' };
+      // team side (ml / spread / margin)
+      const r = (line.team === prop.team ? 0.12 : -0.08) * w * seg;
+      return { r, why: line.team === prop.team ? `${prop.name}'s production feeds his team's margin` : `${prop.name} plays for the side the line is against (counter-acting script)` };
+    }
+    // two game lines in the same game
+    const sides = (x) => ['ml', 'spread', 'margin'].includes(x.kind);
+    if (sides(a) && sides(b)) { if (a.seg !== b.seg) return { r: a.team === b.team ? 0.35 : -0.35, why: 'segment winner and full-game side move together' }; return null; }
+    if ((a.kind === 'total' && b.kind === 'teamtotal') || (a.kind === 'teamtotal' && b.kind === 'total') || (a.kind === b.kind && (a.kind === 'total' || a.kind === 'teamtotal'))) return null; // redundant scoring exposure
+    if ((sides(a) && b.kind === 'total') || (sides(b) && a.kind === 'total')) return { r: 0.03, why: 'side and total — weak scoring link' };
+    return { r: 0, why: 'no structural link' };
+  }
+
+  function evalCombo(legs) {
+    const pairs = [];
+    for (let i = 0; i < legs.length; i++) for (let j = i + 1; j < legs.length; j++) {
+      const c = rho(legs[i], legs[j]);
+      if (!c || c.r < 0) return null; // correlation filter: no negative or redundant pairings
+      pairs.push({ i, j, ...c });
+    }
+    const ps = legs.map((l) => l.p.fair), qs = legs.map((l) => l.p.implied);
+    let trueP;
+    if (legs.length === 2) trueP = joint2(ps[0], ps[1], pairs[0].r);
+    else {
+      // Kirkwood superposition on pairwise joints
+      const pj = (k) => joint2(ps[pairs[k].i], ps[pairs[k].j], pairs[k].r);
+      const j01 = pj(0), j02 = pj(1), j12 = pj(2);
+      trueP = ps[0] * ps[1] * ps[2] * (j01 / (ps[0] * ps[1])) * (j02 / (ps[0] * ps[2])) * (j12 / (ps[1] * ps[2]));
+      trueP = Math.min(trueP, j01, j02, j12);
+    }
+    const indTrue = ps.reduce((a, b) => a * b, 1), mkt = qs.reduce((a, b) => a * b, 1);
+    const edge = trueP - mkt;
+    const kelly = edge > 0 ? (trueP - mkt) / (1 - mkt) : 0;
+    const haircut = legs.length === 3 ? 0.7 : 0.85;
+    const scale = Math.round(U.clamp((kelly * 0.25 * haircut) / 0.02 * 10, 0, 10) * 10) / 10;
+    return { legs, pairs, trueP, indTrue, mkt, edge, scale, kelly: kelly * 0.25 * haircut, buyMax: Math.max(0, trueP - 0.04), fairMax: trueP, minR: Math.min(...pairs.map((x) => x.r)) };
+  }
+
+  /** picks: [{p, g}] survivors. Returns {two, three} sorted by net compound edge. */
+  function build(pool, opts = {}) {
+    const top = pool.filter(({ p }) => p.survivor && !p.modelOnly && p.implied > 0.02).sort((a, b) => b.p.netEdge - a.p.netEdge).slice(0, opts.pool || 12);
+    const L = top.map(({ p, g }) => legOf(p, g));
+    const fams = new Set(L.map((l) => l.fam));
+    const mixed = fams.size > 1; // props and lines both available → every ticket must mix them
+    const two = [], three = [];
+    for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+      const legs = [L[i], L[j]];
+      if (mixed && new Set(legs.map((l) => l.fam)).size < 2) continue;
+      const c = evalCombo(legs); if (c && c.edge > 0.04) two.push(c);
+      for (let k = j + 1; k < L.length; k++) {
+        const l3 = [L[i], L[j], L[k]];
+        if (mixed && new Set(l3.map((l) => l.fam)).size < 2) continue;
+        const c3 = evalCombo(l3); if (c3 && c3.edge > 0.04) three.push(c3);
+      }
+    }
+    const sort = (a, b) => b.edge - a.edge;
+    return { two: two.sort(sort).slice(0, opts.max || 5), three: three.sort(sort).slice(0, opts.max || 5) };
+  }
+
+  const toAm = (p) => (p <= 0 || p >= 1 ? '—' : p >= 0.5 ? '−' + Math.round(p / (1 - p) * 100) : '+' + Math.round((1 - p) / p * 100));
+  const P2 = (x) => (x * 100).toFixed(2) + '%';
+  function report(c) {
+    const legs = c.legs;
+    const qTxt = legs.map((l) => `$${l.p.implied.toFixed(2)}`).join(' × ');
+    const synergy = `Legs priced independently: ${qTxt} = ${P2(c.mkt)} (${toAm(c.mkt)}). True legs ${legs.map((l) => P2(l.p.fair)).join(', ')}; independent product ${P2(c.indTrue)}; correlation-adjusted joint ${P2(c.trueP)} (${U.signed((c.trueP - c.indTrue) * 100, 2)} pts from correlation). Compound edge ${U.signed(c.edge * 100, 2)}% → fair odds ${toAm(c.trueP)}; EV ${c.edge >= 0 ? '+' : '−'}$${Math.abs(c.edge / c.mkt).toFixed(2)} per $1 staked.`;
+    const script = c.pairs.map((x) => `Leg ${x.i + 1} ↔ Leg ${x.j + 1} (ρ ${x.r >= 0 ? '+' : ''}${x.r.toFixed(2)}): ${x.why}.`).join(' ') + (() => {
+      const gs = [...new Set(legs.map((l) => l.g))];
+      return ' ' + gs.map((g) => { const rec = INTEL.get(g.id), pm = rec?.poss || INTEL.possModel(g); return `${g.away.abbr}@${g.home.abbr}: ${pm.poss.toFixed(1)} projected possessions vs league ${pm.lgPace.toFixed(1)}, consensus total ${g.pre?.total?.toFixed(1) ?? '—'}.`; }).join(' ');
+    })();
+    const inj = legs.map((l, i) => `Leg ${i + 1}: ${l.fam === 'prop' ? `${l.name} ${l.p.data.player.st?.code || '—'}` : 'game report loaded'}`).join('; ');
+    const fat = [...new Set(legs.map((l) => l.g))].map((g) => { const f = g.fat; if (!f) return `${g.away.abbr}@${g.home.abbr}: schedule not loaded`; const t = [...(f.away?.flags || []).map((x) => g.away.abbr + ' ' + x), ...(f.home?.flags || []).map((x) => g.home.abbr + ' ' + x)]; return `${g.away.abbr}@${g.home.abbr}: ${t.length ? t.join('; ') : 'no fatigue flags'}`; }).join(' · ');
+    const stress = `Roster verification — ${inj}. Fatigue — ${fat}. Minimum single-leg edge ${U.signed(Math.min(...legs.map((l) => l.p.netEdge)) * 100, 2)}%; minimum pairwise ρ ${c.minR >= 0 ? '+' : ''}${c.minR.toFixed(2)} (no counter-acting scripts). Allocation carries a ${legs.length === 3 ? '0.70' : '0.85'} multi-leg variance haircut.`;
+    return [{ k: 'syn', title: 'COMPOUND EDGE SYNERGY', t: synergy }, { k: 'script', title: 'GAME SCRIPT & PACING CROSS-CORRELATION', t: script }, { k: 'stress', title: 'COMPOUNDING STRESS-TEST DEFENSE', t: stress }];
+  }
+  return { build, report, toAm, rho, bvn, joint2 };
 })();
 
 /* ---- court.js ---- */
@@ -2955,7 +3296,7 @@ const CHART = (() => {
     const xv = (p) => (lean ? p.lean : p.edge);
     const pts = picks.filter((p) => isFinite(xv(p)) && isFinite(p.fair)).slice(0, 120);
     const ex = pts.map((p) => xv(p) * 100);
-    let x0 = lean ? 0 : Math.min(-6, ...ex), x1 = Math.max(lean ? 10 : 12, ...ex);
+    let x0 = lean ? 0 : Math.max(-20, Math.min(-6, ...ex)), x1 = Math.min(40, Math.max(lean ? 10 : 12, ...ex));
     x0 = Math.floor(x0 / 2) * 2; x1 = Math.ceil(x1 / 2) * 2;
     const y0 = 0, y1 = 100;
     const sx = (v) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
@@ -2966,27 +3307,28 @@ const CHART = (() => {
     let s = `<svg viewBox="0 0 ${W} ${H}" class="edgemap" role="img" aria-label="Edge map: confidence versus edge for ${pts.length} picks">`;
     // playable zone
     if (!lean) {
-      s += `<rect x="${sx(2.5)}" y="${T}" width="${Math.max(0, sx(x1) - sx(2.5))}" height="${H - T - B}" fill="var(--zone)"/>`;
-      s += `<text x="${sx(x1) - 6}" y="${T + 14}" text-anchor="end" class="ax zl">+EV zone</text>`;
+      s += `<rect x="${sx(4)}" y="${T}" width="${Math.max(0, sx(x1) - sx(4))}" height="${sy(30) - T}" fill="var(--zone)"/>`;
+      s += `<line x1="${L}" x2="${W - R}" y1="${sy(30)}" y2="${sy(30)}" class="grid zero"/>`;
+      s += `<text x="${sx(x1) - 6}" y="${T + 14}" text-anchor="end" class="ax zl">survivor zone: edge ≥ +4.00%, true ≥ 30%</text>`;
     } else s += `<text x="${sx(x1) - 6}" y="${T + 14}" text-anchor="end" class="ax zl">no live prices: model lean</text>`;
     for (const v of yt) s += `<line x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}" class="grid"/><text x="${L - 6}" y="${sy(v) + 4}" text-anchor="end" class="ax">${v}%</text>`;
-    for (const v of xt) s += `<line y1="${T}" y2="${H - B}" x1="${sx(v)}" x2="${sx(v)}" class="grid${v === 0 ? ' zero' : ''}"/><text x="${sx(v)}" y="${H - B + 16}" text-anchor="middle" class="ax">${v > 0 ? '+' : ''}${v}${lean ? '' : '¢'}</text>`;
-    s += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" class="ax tt">${lean ? 'Model lean vs baseline (pct pts)' : 'Edge per $1 contract after fees'}</text>`;
-    s += `<text x="12" y="${(T + H - B) / 2}" text-anchor="middle" class="ax tt" transform="rotate(-90 12 ${(T + H - B) / 2})">Confidence</text>`;
+    for (const v of xt) s += `<line y1="${T}" y2="${H - B}" x1="${sx(v)}" x2="${sx(v)}" class="grid${v === 0 ? ' zero' : ''}"/><text x="${sx(v)}" y="${H - B + 16}" text-anchor="middle" class="ax">${v > 0 ? '+' : ''}${v}${lean ? '' : '%'}</text>`;
+    s += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" class="ax tt">${lean ? 'Model lean vs baseline (pct pts)' : 'Net edge: true − implied probability (pts)'}</text>`;
+    s += `<text x="12" y="${(T + H - B) / 2}" text-anchor="middle" class="ax tt" transform="rotate(-90 12 ${(T + H - B) / 2})">True probability</text>`;
     // marks (draw weakest first so best are on top)
     const sorted = [...pts].sort((a, b) => a.rating - b.rating);
     for (const p of sorted) {
       const f = FAM[famOf(p)];
       const r = p.tier === 'HOF' ? 7.5 : p.tier === 'GOLD' ? 6.5 : p.tier ? 5.5 : 4.5;
       const x = sx(xv(p) * 100), y = sy(p.fair * 100);
-      s += `<g class="pt${p.playable ? ' play' : ''}${p.lag ? ' lag' : ''}" data-id="${U.esc(p.id)}" tabindex="0">`;
+      s += `<g class="pt${p.survivor ? ' play' : ''}${p.lag ? ' lag' : ''}" data-id="${U.esc(p.id)}" tabindex="0">`;
       s += `<circle cx="${x}" cy="${y}" r="16" fill="transparent"/>`;
       if (p.lag) s += `<circle cx="${x}" cy="${y}" r="${r + 4}" class="lagring"/>`;
-      s += `<path d="${shapePath(f.shape, x, y, r)}" fill="${f.color}" stroke="var(--chart-bg)" stroke-width="2" opacity="${p.playable || lean ? 1 : 0.45}"/>`;
+      s += `<path d="${shapePath(f.shape, x, y, r)}" fill="${f.color}" stroke="var(--chart-bg)" stroke-width="2" opacity="${p.survivor || lean ? 1 : 0.35}"/>`;
       s += `</g>`;
     }
     // direct labels for top 3 playable
-    const top = pts.filter((p) => p.playable || lean).sort((a, b) => b.rating - a.rating).slice(0, 3);
+    const top = pts.filter((p) => p.survivor || lean).sort((a, b) => (b.netEdge ?? b.lean) - (a.netEdge ?? a.lean)).slice(0, 3);
     for (const p of top) {
       const x = sx(xv(p) * 100), y = sy(p.fair * 100);
       const right = x < W - 170;
@@ -3000,7 +3342,7 @@ const CHART = (() => {
     const show = (g) => {
       const p = byId.get(g.dataset.id); if (!p) return;
       const box = el.querySelector('.chartwrap').getBoundingClientRect(), r = g.getBoundingClientRect();
-      tip.innerHTML = p.modelOnly ? `<b>${U.esc(p.label)}</b><span>${p.side} if ≤ ${U.cents(p.maxEntry)} · fair ${U.cents(p.fair)}</span><span>Lean +${(p.lean * 100).toFixed(1)} · Conf ${U.pct(p.fair)} · OVR ${p.rating}</span>` : `<b>${U.esc(p.label)}</b><span>${p.side} @ ${U.cents(p.price)} · fair ${U.cents(p.fair)}</span><span>Edge ${U.signed(p.edge * 100, 1)}¢ · Conf ${U.pct(p.fair)} · OVR ${p.rating}</span>`;
+      tip.innerHTML = p.modelOnly ? `<b>${U.esc(p.label)}</b><span>${p.side} if ≤ ${U.cents(p.maxEntry)} · fair ${U.cents(p.fair)}</span><span>Lean +${(p.lean * 100).toFixed(1)} · Conf ${U.pct(p.fair)} · OVR ${p.rating}</span>` : `<b>${U.esc(p.label)}</b><span>${p.side} @ $${p.price.toFixed(2)} · implied ${(p.implied * 100).toFixed(2)}%</span><span>True ${(p.fair * 100).toFixed(2)}% · edge ${U.signed(p.netEdge * 100, 2)}% · ${p.survivor ? 'survived' : 'rejected'}</span>`;
       tip.hidden = false;
       const tx = U.clamp(r.left - box.left + r.width / 2, 90, box.width - 90);
       tip.style.left = tx + 'px'; tip.style.top = (r.top - box.top - 8) + 'px';
@@ -4477,15 +4819,15 @@ const UI = (() => {
     const clock = g.state === 'in' ? `${U.periodShort(g.period)} ${U.fmtClock(g.clockSec)}` : U.localTime(g.date);
     return `<button class="tk bn tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
         <span class="bn-rank">${rank}</span>
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · conf ${U.pct(p.fair)}${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
-          <span class="bn-buy">BUY ${p.side} at ≤ ${U.cents(p.maxEntry)} <em>now ${U.cents(p.price)}</em></span></span>
-        <span class="tk-side"><b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · implied ${(p.implied * 100).toFixed(1)}%${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
+          <span class="bn-buy">BUY ${p.side} ≤ $${p.buyMax.toFixed(2)} <em>now $${p.price.toFixed(2)} · true ${(p.fair * 100).toFixed(1)}%</em></span></span>
+        <span class="tk-side"><b class="pos">${U.signed(p.netEdge * 100, 2)}%</b><small>scale ${p.scale.toFixed(1)} · ${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
       </button>`;
   }
   function watchRow(p, g) {
     return `<button class="tk wl" data-game="${g.id}" data-pick="${U.esc(p.id)}">
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now ${U.cents(p.price)}`} · fair ${U.cents(p.fair)}</small></span>
-        <span class="tk-side"><b>≤ ${U.cents(p.maxEntry)}</b><small>buy below</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now $${p.price.toFixed(2)}`} · true ${(p.fair * 100).toFixed(1)}%</small></span>
+        <span class="tk-side"><b>≤ $${p.maxEntry.toFixed(2)}</b><small>buy zone</small></span>
       </button>`;
   }
   function buyLists(games) {
@@ -4495,11 +4837,11 @@ const UI = (() => {
       for (const p of g.eval.picks) {
         if (!kalshiBuyable(p)) continue;
         if (p.playable) buy.push({ p, g });
-        else if (p.fair > p.price - 0.06 && p.maxEntry > 0.03) watch.push({ p, g });
+        else if (p.survivor) watch.push({ p, g });
       }
       for (const p of (g.eval.models || []).slice(0, 4)) model.push({ p, g });
     }
-    buy.sort((a, b) => b.p.edge - a.p.edge || b.p.rating - a.p.rating);
+    buy.sort((a, b) => b.p.netEdge - a.p.netEdge);
     watch.sort((a, b) => (a.p.price - a.p.maxEntry) - (b.p.price - b.p.maxEntry));
     model.sort((a, b) => b.p.rating - a.p.rating);
     return { buy, watch, model };
@@ -4508,7 +4850,7 @@ const UI = (() => {
     const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
     if (lists.buy.length) return lists.buy.slice(0, max).map(({ p, g }, i) => buyRow(p, g, i + 1, feedMap)).join('');
     let h = `<p class="muted small bn-empty">${empty}</p>`;
-    if (lists.watch.length) h += `<h4 class="subh">Watch — buy if the price drops</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
+    if (lists.watch.length) h += `<h4 class="subh">Survived stress tests — above buy zone, wait for the price</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     else if (lists.model.length) h += `<h4 class="subh">Model overs — check the price on Kalshi</h4>` + lists.model.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     return h;
   }
@@ -4518,9 +4860,13 @@ const UI = (() => {
     lastTicker = Date.now();
     const lists = buyLists(STATE.list);
     const st = KALSHI.status();
-    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'No Kalshi price is under the max entry right now. New buys appear here the moment they open.';
+    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'Zero contracts inside a buy zone (≥ +4.00% net edge, ≥ 30% true probability). Entries appear here the moment a price crosses.';
     const html = buyHTML(lists, 10, empty);
     if (html !== lastTickerHTML) { el.innerHTML = html; lastTickerHTML = html; }
+    // slate parlays (built from every game's Section 1 survivors)
+    const pool = []; for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of g.eval.survivors || []) pool.push({ p, g });
+    const pe = $('#slateParlays');
+    if (pe) { const ph = parlaysHTML(PARLAY.build(pool, { pool: 14, max: 3 }), 'No 2- or 3-leg combination clears +4.00% compound edge with non-negative correlation.'); if (ph !== pe._h) { pe.innerHTML = ph; pe._h = ph; } }
   }
 
   // ---------- Pick Finder ----------
@@ -4548,18 +4894,18 @@ const UI = (() => {
         </section>
         <div class="toolbar" role="toolbar">
           <div class="seg" id="fFilter">${[['all', 'All'], ['live', 'Live'], ['prop', 'Props'], ['line', 'Lines'], ['seg', 'Qtrs/Halves']].map(([k, l]) => `<button class="chip${F.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
-          <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> +EV only</label>
-          <label class="sel">Sort <select id="fSort"><option value="rating">Pick rating</option><option value="edge">Edge ¢</option><option value="roi">ROI</option><option value="conf">Confidence</option></select></label>
+          <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> Buy zone only</label>
         </div>
         <section class="pane"><h3>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
-        <section class="pane"><h3>Live Pick Feed<small>new edges, timestamped</small></h3><ol id="fFeed" class="feed"></ol></section>
-        <section class="pane"><h3>Ranked Picks<small id="fUpd"></small></h3><div id="fList" class="plist"></div></section>
+        <section class="pane"><h3>Section 1 · Main Picks<small id="fUpd"></small></h3><div id="fList" class="plist"></div></section>
+        <section class="pane"><h3>Section 2 · Optimal Parlays<small>built from Section 1 survivors</small></h3><div id="fParlays" class="plist"></div></section>
+        <section class="pane"><h3>Live Pick Feed<small>buy-zone entries, timestamped</small></h3><ol id="fFeed" class="feed"></ol></section>
         <section class="pane"><h3>Projection Board<small>model fair lines</small></h3><div id="fBoard"></div></section>
         <section class="pane"><h3>Matchup Intel</h3><div id="fIntel" class="intel"></div></section>
-        <section class="pane notes"><h3>How the numbers work</h3>
-          <p><b>Confidence</b> is the model's probability that the pick hits. <b>Real price</b> is that probability in cents, the price where the contract is break-even before fees. <b>Edge</b> is real price minus the ask minus Kalshi's taker fee (7%×P×(1−P)). <b>Max entry</b> keeps a safety margin for model error; above it, pass. <b>Great entry</b> is a further 6¢ cushion.</p>
-          <p>Game lines blend the sportsbook line (via ESPN), ESPN BPI and Kalshi's own ladders. Live lines use a score/clock random-walk model that re-anchors to the market only during quiet stretches, so a stale quote after a basket shows up as a <b>LAG</b> edge. Props use two seasons of game logs weighted to recent form, projected minutes, the market-implied team total, head-to-head history, home/away and rest splits, and with/without splits for injured teammates. Live props re-project from the current box score, fouls and blowout risk.</p>
-          <p>Prices come from Kalshi; Robinhood's event contracts can differ. Scores are only as fast as ESPN and the NBA's own feed publish them. No model guarantees a profit: size small and treat thin samples with care.</p></section>
+        <section class="pane notes"><h3>Risk protocol</h3>
+          <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN). Players not listed are fully active; a player in tonight's live box score is active regardless. A roster flag that the game report contradicts benches that player's props; no report loaded holds the whole game. Teammate usage shifts apply only to OUT (weight 1.00) and DOUBTFUL (0.75) designations. Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
+          <p><b>Phase 2 — stress tests.</b> Projected possessions = team A pace × team B pace ÷ league pace; volume scales by game possessions ÷ the player's team baseline; efficiency by the opponent's points allowed per 100 possessions; both blended 50/50 with the market-implied team total. Usage proxy (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate (date-joined game logs). Fatigue matrix: back-to-back, 3-in-4, 5 road games in 7, time-zone shifts within 24h, visiting altitude. Gates: net edge (true − implied) ≥ +4.00%; true probability ≥ 30% unless net edge ≥ +10 pts and ROI ≥ +60%; props whose L10 hit rate is ≥ 70% while the projection sits below 95% of the L10 average are deleted. Player props are overs only.</p>
+          <p><b>Phase 3 — sizing.</b> Allocation scale 0–10 = ¼-Kelly ÷ 3% of bankroll (props and lines) or ¼-Kelly × variance haircut (0.85 two-leg, 0.70 three-leg) ÷ 2% (parlays). Parlays use only Section 1 survivors, must mix props with game lines when both exist, and bar any pair with negative or redundant correlation; joint probability uses a Gaussian copula (Kirkwood product for three legs). Not in any public feed and therefore not applied: individual defensive ratings, play-type and zone defense, on-court usage %, coaching minute caps. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></section>
       </div></div>`;
     el.hidden = false;
     document.body.classList.add('finder-open');
@@ -4569,9 +4915,8 @@ const UI = (() => {
     $('#fClose').onclick = () => { clearHash(); closeFinder(); };
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
-    $('#fSort').value = F.sort; $('#fSort').onchange = (e) => { F.sort = e.target.value; updateFinder(true); };
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
-    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const id2 = d.closest('.pick')?.dataset.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
+    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const pk = d.closest('.pick'); const id2 = pk?.dataset.id || pk?.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
     el.scrollTop = 0;
     updateFinder(true);
     APP.focus(id);
@@ -4593,49 +4938,104 @@ const UI = (() => {
     else if (F.filter === 'line') ps = ps.filter((p) => p.kind !== 'prop' && !p.seg);
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
-    const key = { rating: (p) => p.rating, edge: (p) => p.edge ?? p.lean ?? 0, roi: (p) => p.roi ?? p.lean ?? 0, conf: (p) => p.fair }[F.sort];
-    return [...ps].sort((a, b) => (b.playable - a.playable) || key(b) - key(a)); // buyable first
+    // strict descending order by net mathematical edge (model-only lines by lean)
+    return [...ps].sort((a, b) => (b.netEdge ?? b.lean ?? -1) - (a.netEdge ?? a.lean ?? -1));
   }
 
   const amOf = (pr) => (pr <= 0 || pr >= 1 ? '—' : pr >= 0.5 ? '−' + Math.round(pr / (1 - pr) * 100) : '+' + Math.round((1 - pr) / pr * 100));
+  const P2 = (x) => (x == null || !isFinite(x) ? '—' : (x * 100).toFixed(2) + '%');
+  const SEGL = { Q1: '1st Quarter', Q2: '2nd Quarter', Q3: '3rd Quarter', Q4: '4th Quarter', '1H': '1st Half', '2H': '2nd Half' };
+  // "[Player or Team] — [Selection]"
+  function heading(p, g) {
+    const m = p.m, seg = m.seg ? ` (${SEGL[m.seg]})` : '';
+    const tn = (side) => g[side].full || g[side].name;
+    const other = (side) => (side === 'home' ? 'away' : 'home');
+    switch (p.kind) {
+      case 'prop': { const L = MODEL.LABEL[m.stat] || m.stat; return [m.player || p.data.player.name, `Over ${(m.th.k - 0.5).toFixed(1)} ${L.replace(/^./, (c) => c.toUpperCase())} (${m.th.k}+)`]; }
+      case 'ml': if (m.side === 'tie') return [`${g.away.abbr} @ ${g.home.abbr}`, p.yes ? `${SEGL[m.seg]} Tie` : `No ${SEGL[m.seg]} Tie`]; return [tn(p.yes ? m.side : other(m.side)), `Moneyline${seg}`];
+      case 'spread': return p.yes ? [tn(m.side), `−${m.th.line} Spread${seg}`] : [tn(other(m.side)), `+${m.th.line} Spread${seg}`];
+      case 'total': return [`${g.away.abbr} @ ${g.home.abbr}`, `${p.yes ? 'Over' : 'Under'} ${m.th.line} Total Points${seg}`];
+      case 'teamtotal': return [tn(m.side), `${p.yes ? 'Over' : 'Under'} ${m.th.line} Team Points${seg}`];
+      case 'margin': { const r = m.range ? (m.range[1] === Infinity ? `${m.range[0]}+` : `${m.range[0]}–${m.range[1]}`) : ''; return [tn(m.side), `${p.yes ? '' : 'NOT '}Wins by ${r}`]; }
+      case 'ot': return [`${g.away.abbr} @ ${g.home.abbr}`, p.yes ? 'Game Goes to Overtime' : 'No Overtime'];
+    }
+    return [p.label, p.sub];
+  }
+  function marketLine(p, g) {
+    const [, sel] = heading(p, g);
+    if (p.modelOnly) return `${sel} — no live Kalshi quote (buy only at ≤ $${p.maxEntry.toFixed(2)})`;
+    if (p.book) return `${sel} at ${PICKS.fmtAm(p.am)} (${U.esc(p.book)})`;
+    return `${sel} at $${p.price.toFixed(2)} Kalshi ${p.side} ask (${amOf(p.price)})${p.delayed ? ` · price ${U.ago(p.m.snapAt)}` : ''}`;
+  }
+  // three-zone bracket: BUY ZONE ≤ buyMax (≥4.00 pts edge) · FAIR VALUE ZONE ≤ break-even · DO NOT BUY above
   function entryBar(p) {
     const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
-    return `<div class="entry" aria-label="Entry range">
-      <div class="eb"><i class="g" style="width:${pos(p.greatEntry)}"></i><i class="y" style="left:${pos(p.greatEntry)};width:${U.clamp((p.maxEntry - p.greatEntry) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.maxEntry)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
-      <div class="el"><span>Great ≤ <b>${U.cents(p.greatEntry)}${p.book ? ' (' + amOf(p.greatEntry) + ')' : ''}</b></span><span>Max entry <b>${U.cents(p.maxEntry)}${p.book ? ' (' + amOf(p.maxEntry) + ')' : ''}</b></span><span class="bad">Too expensive ≥ <b>${Math.round(p.maxEntry * 100) + 1}¢</b></span></div>
+    const am = (v) => (p.book ? ` (${amOf(v)})` : '');
+    return `<div class="entry" aria-label="Price-to-value bracket">
+      <div class="eb"><i class="g" style="width:${pos(p.buyMax)}"></i><i class="y" style="left:${pos(p.buyMax)};width:${U.clamp((p.fairMax - p.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.fairMax)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
+      ${(() => { const bt = Math.floor(p.buyMax * 100) / 100, ft = Math.max(bt, Math.floor(p.fairMax * 100) / 100); return `<div class="el"><span>BUY ZONE ≤ <b>$${bt.toFixed(2)}${am(bt)}</b></span>${ft > bt ? `<span>FAIR VALUE $${(bt + 0.01).toFixed(2)}–$${ft.toFixed(2)}</span>` : ''}<span class="bad">DO NOT BUY ≥ <b>$${(ft + 0.01).toFixed(2)}${am(ft + 0.01)}</b></span></div>`; })()}
     </div>`;
   }
-
   function pickHTML(p, g) {
     const fe = PICKS.feed(g.id).find((e) => e.key === p.id);
-    const ev = PICKS.evidence(p, g);
+    const ev = p.modelOnly ? null : PICKS.evidence(p, g);
     const chips = [];
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
-    if (fe && fe.active && Date.now() - fe.firstSeen < 90e3) chips.push('<span class="chipx new">NEW</span>');
+    if (p.playable) chips.push('<span class="chipx new">BUY ZONE</span>');
     if (p.delayed) chips.push(`<span class="chipx delayed">KALSHI · ${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
-    if (p.modelOnly) chips.push('<span class="chipx model">MODEL · NO LIVE PRICE</span>');
-    else if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
-    if (!p.playable && !p.modelOnly) chips.push('<span class="chipx pass">PASS</span>');
-    return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.playable ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
+    if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
+    if (fe) chips.push(`<span>logged ${U.ago(fe.firstSeen)} · ${U.esc(fe.periodTag)}</span>`);
+    const [who, sel] = heading(p, g);
+    const evd = ev || PICKS.evidence(p, g);
+    return `<article class="pick rep tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
       <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span>
-        <span class="pk-t"><b>${U.esc(p.label)}</b><small>${U.esc(p.sub)}</small><small class="buy">${p.book ? 'Bet' : 'Buy'} <b>${p.book ? U.esc(p.label) : p.side}</b>${p.book ? ' at ' + U.esc(p.book) : ` on “${U.esc(p.m.sub || p.m.title)}”`}</small></span>
+        <span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b><small>${U.esc(p.sub)}</small></span>
         <span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
-      <div class="pk-s">
-        <div><label>Confidence</label><b>${U.pct(p.fair)}</b></div>
-        <div><label>Real price</label><b>${U.cents(p.fair)}</b></div>
-        ${p.modelOnly ? `<div><label>Buy if ≤</label><b>${U.cents(p.maxEntry)}</b></div><div><label>${p.data.fp.liveBase ? 'Live swing' : 'Lean'}</label><b class="pos">+${(p.lean * 100).toFixed(1)}</b></div>`
-        : `<div><label>${p.book ? U.esc(p.book) : 'Kalshi ask'}</label><b>${p.book ? PICKS.fmtAm(p.am) : U.cents(p.price)}</b></div><div><label>Edge</label><b class="${p.edge > 0 ? 'pos' : 'neg'}">${U.signed(p.edge * 100, 1)}¢</b></div>`}
-      </div>
+      <ul class="facts">
+        <li><label>Verified Roster/Injury Status</label><span>${U.esc(evd.status)}</span></li>
+        <li><label>Current Market Line / Kalshi Ask Contract Price</label><span>${U.esc(marketLine(p, g))}</span></li>
+        ${p.modelOnly ? '' : `<li><label>Market Implied Winning Probability</label><b>${P2(p.implied)}</b></li>`}
+        <li><label>Algorithmic True Winning Probability</label><b>${P2(p.fair)}</b></li>
+        ${p.modelOnly ? '' : `<li><label>Net Mathematical Inefficiency Edge</label><b class="${p.netEdge >= 0 ? 'pos' : 'neg'}">${U.signed(p.netEdge * 100, 2)}%</b></li>
+        <li><label>Volumetric Allocation Scale (0-10)</label><b>${p.scale.toFixed(1)}</b><small>¼-Kelly ${(p.kelly * 100).toFixed(2)}% of bankroll</small></li>`}
+        ${p.reason ? `<li class="rej"><label>Stress-test result</label><span>REJECTED — ${U.esc(p.reason)}</span></li>` : ''}
+      </ul>
       ${entryBar(p)}
-      <div class="pk-m">${chips.join('')}${p.modelOnly ? '<span>Compare with the live price on Kalshi or Robinhood</span>' : `<span>ROI ${U.signed(p.roi * 100, 0)}%</span><span>¼-Kelly ${(p.kelly * 100).toFixed(1)}%</span>${p.book ? '' : `<span>Spread ${Math.round(p.liq.spread * 100)}¢</span>`}`}<span>${fe ? 'Found ' + U.ago(fe.firstSeen) + (fe.periodTag ? ' · ' + fe.periodTag : '') : ''}</span></div>
-      <details${openDetails.has(p.id) ? ' open' : ''}><summary>Why — ${ev.length} data points</summary><ul>${ev.map((e) => `<li class="ev-${e.k}">${U.esc(e.t)}</li>`).join('')}</ul></details>
+      <div class="pk-m">${chips.join('')}</div>
+      <details${openDetails.has(p.id) ? ' open' : ''}><summary>Data-Driven Strategic Evidence</summary><ul class="evs">${evd.sections.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
     </article>`;
+  }
+
+  // ---------- Section 2: parlays ----------
+  function parlayHTML(c, idx) {
+    const id = 'px-' + c.legs.map((l) => l.p.id).join('|').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+    const legs = c.legs.map((l, i) => { const [who, sel] = heading(l.p, l.g); return `<li><label>Leg ${i + 1}</label><span>${U.esc(who)} — ${U.esc(sel)} <em>(${l.g.away.abbr}@${l.g.home.abbr}, ${l.p.book ? PICKS.fmtAm(l.p.am) : '$' + l.p.price.toFixed(2)}, true ${P2(l.p.fair)})</em></span></li>`; }).join('');
+    const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
+    const rep = PARLAY.report(c);
+    return `<article class="pick rep parlay" id="${id}">
+      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span>
+        <span class="pk-t"><b>${c.legs.length}-Leg Optimal High-Profitability Parlay</b><small>Cumulative Edge Score: ${(c.edge * 100).toFixed(2)}</small></span></div>
+      <ul class="facts">${legs}
+        <li><label>Combined Market Odds (legs at current asks)</label><b>${PARLAY.toAm(c.mkt)}</b></li>
+        <li><label>Market Implied Combined Parlay Probability</label><b>${P2(c.mkt)}</b></li>
+        <li><label>Algorithmic True Combined Parlay Probability</label><b>${P2(c.trueP)}</b></li>
+        <li><label>Net Mathematical Compound Edge</label><b class="pos">${U.signed(c.edge * 100, 2)}%</b></li>
+        <li><label>Volumetric Allocation Scale (0-10)</label><b>${c.scale.toFixed(1)}</b><small>¼-Kelly × ${c.legs.length === 3 ? '0.70' : '0.85'} = ${(c.kelly * 100).toFixed(2)}% of bankroll</small></li>
+      </ul>
+      <div class="entry"><div class="eb"><i class="g" style="width:${pos(c.buyMax)}"></i><i class="y" style="left:${pos(c.buyMax)};width:${U.clamp((c.fairMax - c.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(c.fairMax)}"></i><b class="now" style="left:${pos(c.mkt)}"></b></div>
+        <div class="el"><span>BUY TICKET ZONE: ${PARLAY.toAm(c.buyMax)} or longer (≤ $${c.buyMax.toFixed(3)}/$1)</span><span>FAIR VALUE: ${PARLAY.toAm(c.fairMax)} to ${PARLAY.toAm(c.buyMax)}</span><span class="bad">DO NOT BUY: shorter than ${PARLAY.toAm(c.fairMax)}</span></div></div>
+      <details${openDetails.has(id) ? ' open' : ''}><summary>Mathematical Synergy &amp; Correlation Analysis</summary><ul class="evs">${rep.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
+    </article>`;
+  }
+  function parlaysHTML(res, empty) {
+    if (!res.two.length && !res.three.length) return `<p class="muted small">${empty}</p>`;
+    return (res.two.length ? `<h4 class="subh">2-leg</h4>` + res.two.map(parlayHTML).join('') : '') + (res.three.length ? `<h4 class="subh">3-leg</h4>` + res.three.map(parlayHTML).join('') : '');
   }
 
   function renderFeed(g) {
     const items = PICKS.feed(g.id).slice(0, 25);
-    $('#fFeed').innerHTML = items.length ? items.map((e) => `<li class="${e.active ? 'act' : 'gone'}"><time>${U.ago(e.firstSeen)}</time><span><b>${U.esc(e.label)}</b> · buy ${e.side} @ ${U.cents(e.entry)} <em>fair ${U.cents(e.fair0)}, edge ${U.signed(e.edge0 * 100, 1)}¢</em>${e.lag ? ' <span class="chipx lag">LAG</span>' : ''}</span><small>${e.periodTag}${e.active ? ' · open' : ' · faded after ' + dur(e.closedAt - e.firstSeen)}</small></li>`).join('')
+    $('#fFeed').innerHTML = items.length ? items.map((e) => `<li class="${e.active ? 'act' : 'gone'}"><time>${U.ago(e.firstSeen)}</time><span><b>${U.esc(e.label)}</b> · buy ${e.side} @ ${U.cents(e.entry)} <em>true ${(e.fair0 * 100).toFixed(2)}%, edge ${U.signed(e.edge0 * 100, 2)}%</em>${e.lag ? ' <span class="chipx lag">LAG</span>' : ''}</span><small>${e.periodTag}${e.active ? ' · open' : ' · faded after ' + dur(e.closedAt - e.firstSeen)}</small></li>`).join('')
       : `<li class="muted">No edges yet. New ones are logged here with the game clock and how long ago they opened.</li>`;
   }
 
@@ -4719,18 +5119,22 @@ const UI = (() => {
     const now = Date.now();
     if (force || (now - lastListRender > 2500 && !busy())) {
       lastListRender = now;
-      const ps = ev ? filtered(ev.picks) : [];
+      const surv = ev ? filtered(ev.survivors || []) : [];
+      const rej = ev ? filtered((ev.picks || []).filter((p) => !p.survivor)) : [];
       const ms = ev && !F.playable ? filtered(ev.models || []) : [];
-      const total = ev ? ev.picks.length : 0;
-      $('#fCount').textContent = ev ? (total ? `${ev.picks.filter((p) => p.playable).length} +EV of ${total} priced` : `${(ev.models || []).length} model picks`) : '';
+      const au = ev?.audit;
+      $('#fCount').textContent = ev ? `${au.survived} survived of ${au.priced + au.roster} priced` : '';
       $('#fUpd').textContent = ev ? 'updated ' + U.ago(ev.at) : '';
       const pend = ev?.pending?.length || 0;
       const rec = INTEL.get(g.id);
       let html = kalshiNote(g);
-      if (ps.length) html += ps.slice(0, 50).map((p) => pickHTML(p, g)).join('');
-      if (pend) html += `<p class="muted small">${pend} more prop markets are waiting on game logs.</p>`;
-      if (ms.length) html += `<h4 class="subh">Model picks — no live price on this line yet</h4><p class="muted small">Best lean per player and stat on Kalshi's standard lines, ranked. Enter only at or below the Buy-if price.</p>` + ms.slice(0, 30).map((p) => pickHTML(p, g)).join('');
-      if (!ps.length && !ms.length) html += `<p class="muted">${rec?.loading || !rec ? 'Loading game logs and injury reports to build picks…' : g.state === 'post' ? 'This game is final.' : 'No picks match this filter.'}</p>`;
+      if (au) html += `<p class="audit">Stress-test matrix: ${au.priced + au.roster} priced assets → <b>${au.survived} survived</b> · rejected: edge &lt; +4.00% ${au.edge} · true probability &lt; 30% ${au.floor} · trend sanitized ${au.trend} · roster unverified/OUT ${au.roster}. Sorted by net edge, highest first.</p>`;
+      if (surv.length) html += surv.slice(0, 40).map((p) => pickHTML(p, g)).join('');
+      else html += `<p class="muted">${!rec || !INTEL.reportLoaded(rec) ? 'Holding all picks until the game-day injury report is loaded (Phase 1).' : g.state === 'post' ? 'This game is final.' : 'Zero assets cleared every stress test at current prices.'}</p>`;
+      if (pend) html += `<p class="muted small">${pend} prop markets waiting on game logs.</p>`;
+      if (rej.length && !F.playable) html += `<details class="rejbox"><summary>Discarded by stress tests (${rej.length})</summary>${rej.slice(0, 25).map((p) => { const [w, sl] = heading(p, g); return `<div class="rejrow"><b>${U.esc(w)} — ${U.esc(sl)}</b><span>implied ${P2(p.implied)} · true ${P2(p.fair)} · ${U.esc(p.reason)}</span></div>`; }).join('')}</details>`;
+      if (ms.length) html += `<details class="rejbox"><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>` + ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') + `</details>`;
+      $('#fParlays').innerHTML = parlaysHTML(PARLAY.build((ev?.survivors || []).map((p) => ({ p, g })), { pool: 12, max: 5 }), 'No 2- or 3-leg combination from this game clears +4.00% compound edge with non-negative correlation.');
       $('#fList').innerHTML = html;
       const bl = buyLists([g]);
       $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} to buy at current prices` : 'nothing to buy right now';
@@ -4741,7 +5145,7 @@ const UI = (() => {
     }
     if (force || (now - lastChartRender > 4000 && !busy())) {
       lastChartRender = now;
-      const priced = ev ? filtered(ev.picks) : [];
+      const priced = ev ? filtered(ev.picks.filter((p) => !p.book || true)) : [];
       const lean = !priced.length;
       const ps = lean ? (ev ? filtered(ev.models || []) : []) : priced;
       CHART.render($('#fChart'), ps, { lean, onPick: (id) => { const t = document.getElementById('pk-' + id.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } } });
@@ -4907,7 +5311,10 @@ const APP = (() => {
         }
       }
     }
-    g.sEff = g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread;
+    // Phase 2.3 fatigue differential (home − away), half weight: the consensus already prices part of rest/travel
+    if (rec && INTEL.reportLoaded(rec)) { g.fat = { home: INTEL.fatigue(rec, g, 'home'), away: INTEL.fatigue(rec, g, 'away') }; g.fatAdj = 0.5 * (g.fat.home.marginPts - g.fat.away.marginPts); }
+    else g.fatAdj = 0;
+    g.sEff = (g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread) + g.fatAdj;
     g.tEff = g.pre.total;
     g.wp = g.state === 'pre' ? g.pre.pHome : MODEL.pHomeWin(g.ls, g.sEff);
     if (g.state === 'in') computeRun(g);

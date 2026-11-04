@@ -93,6 +93,7 @@ const ESPN = (() => {
     min: ['minutes', 'MIN'], pts: ['points', 'PTS'], reb: ['rebounds', 'totalRebounds', 'REB'], ast: ['assists', 'AST'],
     fg3: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted', '3PT'], stl: ['steals', 'STL'], blk: ['blocks', 'BLK'],
     tov: ['turnovers', 'TO'], pf: ['fouls', 'PF'], pm: ['plusMinus', '+/-'],
+    fg: ['fieldGoalsMade-fieldGoalsAttempted', 'FG'], ft: ['freeThrowsMade-freeThrowsAttempted', 'FT'],
   };
   function colIndex(stat) {
     const keys = stat.keys || stat.names || [], names = stat.names || [], labels = stat.labels || [];
@@ -116,7 +117,8 @@ const ESPN = (() => {
           const s = a.stats || [];
           const g = (k) => (ix[k] >= 0 ? s[ix[k]] : null);
           const [f3m, f3a] = made(g('fg3'));
-          players.push({
+          const [, fga] = made(g('fg')), [, fta] = made(g('ft'));
+          players.push({ fga, fta,
             espnId: String(a.athlete?.id || ''), name: a.athlete?.displayName || '', short: a.athlete?.shortName || '',
             pos: a.athlete?.position?.abbreviation || '', jersey: a.athlete?.jersey || '', teamId,
             starter: !!a.starter, active: a.active !== false, dnp: !!a.didNotPlay || !s.length,
@@ -203,6 +205,7 @@ const ESPN = (() => {
   const GL = {
     min: ['minutes', 'MIN'], pts: ['points', 'PTS'], reb: ['totalRebounds', 'rebounds', 'REB'], ast: ['assists', 'AST'],
     fg3: ['threePointFieldGoalsMade-threePointFieldGoalsAttempted', '3PT'], stl: ['steals', 'STL'], blk: ['blocks', 'BLK'], tov: ['turnovers', 'TO'], pf: ['fouls', 'PF'],
+    fg: ['fieldGoalsMade-fieldGoalsAttempted', 'FG'], ft: ['freeThrowsMade-freeThrowsAttempted', 'FT'],
   };
   function parseGamelog(j, season) {
     if (!j) return [];
@@ -224,7 +227,8 @@ const ESPN = (() => {
           const min = U.num(g('min'));
           if (!s.length || min == null) continue;
           const [f3m, f3a] = made(g('fg3'));
-          rows.push({
+          const fgx = g('fg'), ftx = g('ft');
+          rows.push({ fga: fgx != null ? made(fgx)[1] : null, fta: ftx != null ? made(ftx)[1] : null,
             eventId: String(ev.eventId), date: Date.parse(m.gameDate) || 0, opp: TEAMS.toCode(m.opponent?.abbreviation), oppId: String(m.opponent?.id || ''),
             home: m.atVs ? m.atVs !== '@' : null, result: m.gameResult || '', season, post,
             min, pts: U.num(g('pts')) ?? 0, reb: U.num(g('reb')) ?? 0, ast: U.num(g('ast')) ?? 0, fg3m: f3m, fg3a: f3a,
@@ -258,7 +262,21 @@ const ESPN = (() => {
     return { teams: out, lgPts: lg };
   }
 
+  // team season averages; possessions/game = FGA + 0.44·FTA − OREB + TOV
+  function parseTeamStats(j) {
+    const v = {};
+    const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) { o.forEach(walk); return; } if (typeof o.name === 'string' && (o.value != null || o.displayValue != null)) { const x = U.num(o.value ?? o.displayValue); if (x != null && v[o.name] == null) v[o.name] = x; } for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); };
+    walk(j);
+    const pick = (...ks) => { for (const k of ks) if (v[k] != null) return v[k]; return null; };
+    const fga = pick('avgFieldGoalsAttempted'), fta = pick('avgFreeThrowsAttempted'), oreb = pick('avgOffensiveRebounds'), tov = pick('avgTurnovers', 'avgTotalTurnovers');
+    const gp = pick('gamesPlayed');
+    if (fga == null || fta == null || oreb == null || tov == null) return null;
+    const pace = fga + 0.44 * fta - oreb + tov;
+    return pace > 80 && pace < 120 ? { pace, fga, fta, oreb, tov, gp } : null;
+  }
+
   return {
+    teamStats: (teamId) => NET.get('espn', `${P}/teams/${teamId}/statistics`).then(parseTeamStats),
     scoreboard: (key) => NET.get('espn', `${P}/scoreboard?dates=${key}&limit=50`, { fresh: true, timeout: 6000 }).then(parseScoreboard),
     summary: (id, game) => NET.get('espn', `${P}/summary?event=${id}`, { fresh: true }).then((j) => parseSummary(j, game)),
     roster: (teamId) => NET.get('espn', `${P}/teams/${teamId}/roster`).then(parseRoster),

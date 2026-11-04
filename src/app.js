@@ -131,7 +131,10 @@ const APP = (() => {
         }
       }
     }
-    g.sEff = g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread;
+    // Phase 2.3 fatigue differential (home − away), half weight: the consensus already prices part of rest/travel
+    if (rec && INTEL.reportLoaded(rec)) { g.fat = { home: INTEL.fatigue(rec, g, 'home'), away: INTEL.fatigue(rec, g, 'away') }; g.fatAdj = 0.5 * (g.fat.home.marginPts - g.fat.away.marginPts); }
+    else g.fatAdj = 0;
+    g.sEff = (g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread) + g.fatAdj;
     g.tEff = g.pre.total;
     g.wp = g.state === 'pre' ? g.pre.pHome : MODEL.pHomeWin(g.ls, g.sEff);
     if (g.state === 'in') computeRun(g);

@@ -39,9 +39,13 @@ const TEAMS = (() => {
     ['MEM', 29, 'MEM', 'Memphis', 'Grizzlies', '5d76a9', '12173f', 'FedExForum', { wood: 'amber', paint: '#12173f', apron: '#12173f', line: '#ffffff', accent: '#5d76a9', stain: null }],
     ['CHA', 30, 'CHA', 'Charlotte', 'Hornets', '1d1160', '00788c', 'Spectrum Center', { wood: 'maple', paint: '#00788c', apron: '#1d1160', line: '#ffffff', accent: '#a1a1a4', stain: null, honeycomb: true }],
   ];
+  // standard-time UTC offsets (hours) and arena elevation (ft) for travel/fatigue math
+  const TZ = { ATL: -5, BOS: -5, BKN: -5, CHA: -5, CLE: -5, DET: -5, IND: -5, MIA: -5, NYK: -5, ORL: -5, PHI: -5, TOR: -5, WAS: -5,
+    CHI: -6, DAL: -6, HOU: -6, MEM: -6, MIL: -6, MIN: -6, NOP: -6, OKC: -6, SAS: -6, DEN: -7, UTA: -7, PHX: -7, GSW: -8, LAC: -8, LAL: -8, POR: -8, SAC: -8 };
+  const ELEV = { DEN: 5280, UTA: 4226 };
   const byEspn = {}, byId = {}, byCode = {};
   const list = T.map(([espn, id, code, city, name, color, alt, arena, court]) => {
-    const t = { espn, id: String(id), code, city, name, color, alt, arena, court };
+    const t = { espn, id: String(id), code, city, name, color, alt, arena, court, tz: TZ[code] ?? -5, elev: ELEV[code] || 0 };
     byEspn[espn] = t; byId[String(id)] = t; byCode[code] = t;
     return t;
   });

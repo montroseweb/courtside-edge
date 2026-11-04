@@ -154,15 +154,15 @@ const UI = (() => {
     const clock = g.state === 'in' ? `${U.periodShort(g.period)} ${U.fmtClock(g.clockSec)}` : U.localTime(g.date);
     return `<button class="tk bn tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
         <span class="bn-rank">${rank}</span>
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · conf ${U.pct(p.fair)}${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
-          <span class="bn-buy">BUY ${p.side} at ≤ ${U.cents(p.maxEntry)} <em>now ${U.cents(p.price)}</em></span></span>
-        <span class="tk-side"><b class="pos">+${(p.edge * 100).toFixed(1)}¢</b><small>${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · implied ${(p.implied * 100).toFixed(1)}%${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
+          <span class="bn-buy">BUY ${p.side} ≤ $${p.buyMax.toFixed(2)} <em>now $${p.price.toFixed(2)} · true ${(p.fair * 100).toFixed(1)}%</em></span></span>
+        <span class="tk-side"><b class="pos">${U.signed(p.netEdge * 100, 2)}%</b><small>scale ${p.scale.toFixed(1)} · ${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
       </button>`;
   }
   function watchRow(p, g) {
     return `<button class="tk wl" data-game="${g.id}" data-pick="${U.esc(p.id)}">
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now ${U.cents(p.price)}`} · fair ${U.cents(p.fair)}</small></span>
-        <span class="tk-side"><b>≤ ${U.cents(p.maxEntry)}</b><small>buy below</small></span>
+        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${p.modelOnly ? 'no live price on this line' : `now $${p.price.toFixed(2)}`} · true ${(p.fair * 100).toFixed(1)}%</small></span>
+        <span class="tk-side"><b>≤ $${p.maxEntry.toFixed(2)}</b><small>buy zone</small></span>
       </button>`;
   }
   function buyLists(games) {
@@ -172,11 +172,11 @@ const UI = (() => {
       for (const p of g.eval.picks) {
         if (!kalshiBuyable(p)) continue;
         if (p.playable) buy.push({ p, g });
-        else if (p.fair > p.price - 0.06 && p.maxEntry > 0.03) watch.push({ p, g });
+        else if (p.survivor) watch.push({ p, g });
       }
       for (const p of (g.eval.models || []).slice(0, 4)) model.push({ p, g });
     }
-    buy.sort((a, b) => b.p.edge - a.p.edge || b.p.rating - a.p.rating);
+    buy.sort((a, b) => b.p.netEdge - a.p.netEdge);
     watch.sort((a, b) => (a.p.price - a.p.maxEntry) - (b.p.price - b.p.maxEntry));
     model.sort((a, b) => b.p.rating - a.p.rating);
     return { buy, watch, model };
@@ -185,7 +185,7 @@ const UI = (() => {
     const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
     if (lists.buy.length) return lists.buy.slice(0, max).map(({ p, g }, i) => buyRow(p, g, i + 1, feedMap)).join('');
     let h = `<p class="muted small bn-empty">${empty}</p>`;
-    if (lists.watch.length) h += `<h4 class="subh">Watch — buy if the price drops</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
+    if (lists.watch.length) h += `<h4 class="subh">Survived stress tests — above buy zone, wait for the price</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     else if (lists.model.length) h += `<h4 class="subh">Model overs — check the price on Kalshi</h4>` + lists.model.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     return h;
   }
@@ -195,9 +195,13 @@ const UI = (() => {
     lastTicker = Date.now();
     const lists = buyLists(STATE.list);
     const st = KALSHI.status();
-    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'No Kalshi price is under the max entry right now. New buys appear here the moment they open.';
+    const empty = !st.markets && !NET.isDemo() ? 'Waiting for Kalshi prices…' : 'Zero contracts inside a buy zone (≥ +4.00% net edge, ≥ 30% true probability). Entries appear here the moment a price crosses.';
     const html = buyHTML(lists, 10, empty);
     if (html !== lastTickerHTML) { el.innerHTML = html; lastTickerHTML = html; }
+    // slate parlays (built from every game's Section 1 survivors)
+    const pool = []; for (const g of STATE.list) if (g.eval && g.state !== 'post') for (const p of g.eval.survivors || []) pool.push({ p, g });
+    const pe = $('#slateParlays');
+    if (pe) { const ph = parlaysHTML(PARLAY.build(pool, { pool: 14, max: 3 }), 'No 2- or 3-leg combination clears +4.00% compound edge with non-negative correlation.'); if (ph !== pe._h) { pe.innerHTML = ph; pe._h = ph; } }
   }
 
   // ---------- Pick Finder ----------
@@ -225,18 +229,18 @@ const UI = (() => {
         </section>
         <div class="toolbar" role="toolbar">
           <div class="seg" id="fFilter">${[['all', 'All'], ['live', 'Live'], ['prop', 'Props'], ['line', 'Lines'], ['seg', 'Qtrs/Halves']].map(([k, l]) => `<button class="chip${F.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
-          <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> +EV only</label>
-          <label class="sel">Sort <select id="fSort"><option value="rating">Pick rating</option><option value="edge">Edge ¢</option><option value="roi">ROI</option><option value="conf">Confidence</option></select></label>
+          <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> Buy zone only</label>
         </div>
         <section class="pane"><h3>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
-        <section class="pane"><h3>Live Pick Feed<small>new edges, timestamped</small></h3><ol id="fFeed" class="feed"></ol></section>
-        <section class="pane"><h3>Ranked Picks<small id="fUpd"></small></h3><div id="fList" class="plist"></div></section>
+        <section class="pane"><h3>Section 1 · Main Picks<small id="fUpd"></small></h3><div id="fList" class="plist"></div></section>
+        <section class="pane"><h3>Section 2 · Optimal Parlays<small>built from Section 1 survivors</small></h3><div id="fParlays" class="plist"></div></section>
+        <section class="pane"><h3>Live Pick Feed<small>buy-zone entries, timestamped</small></h3><ol id="fFeed" class="feed"></ol></section>
         <section class="pane"><h3>Projection Board<small>model fair lines</small></h3><div id="fBoard"></div></section>
         <section class="pane"><h3>Matchup Intel</h3><div id="fIntel" class="intel"></div></section>
-        <section class="pane notes"><h3>How the numbers work</h3>
-          <p><b>Confidence</b> is the model's probability that the pick hits. <b>Real price</b> is that probability in cents, the price where the contract is break-even before fees. <b>Edge</b> is real price minus the ask minus Kalshi's taker fee (7%×P×(1−P)). <b>Max entry</b> keeps a safety margin for model error; above it, pass. <b>Great entry</b> is a further 6¢ cushion.</p>
-          <p>Game lines blend the sportsbook line (via ESPN), ESPN BPI and Kalshi's own ladders. Live lines use a score/clock random-walk model that re-anchors to the market only during quiet stretches, so a stale quote after a basket shows up as a <b>LAG</b> edge. Props use two seasons of game logs weighted to recent form, projected minutes, the market-implied team total, head-to-head history, home/away and rest splits, and with/without splits for injured teammates. Live props re-project from the current box score, fouls and blowout risk.</p>
-          <p>Prices come from Kalshi; Robinhood's event contracts can differ. Scores are only as fast as ESPN and the NBA's own feed publish them. No model guarantees a profit: size small and treat thin samples with care.</p></section>
+        <section class="pane notes"><h3>Risk protocol</h3>
+          <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN). Players not listed are fully active; a player in tonight's live box score is active regardless. A roster flag that the game report contradicts benches that player's props; no report loaded holds the whole game. Teammate usage shifts apply only to OUT (weight 1.00) and DOUBTFUL (0.75) designations. Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
+          <p><b>Phase 2 — stress tests.</b> Projected possessions = team A pace × team B pace ÷ league pace; volume scales by game possessions ÷ the player's team baseline; efficiency by the opponent's points allowed per 100 possessions; both blended 50/50 with the market-implied team total. Usage proxy (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate (date-joined game logs). Fatigue matrix: back-to-back, 3-in-4, 5 road games in 7, time-zone shifts within 24h, visiting altitude. Gates: net edge (true − implied) ≥ +4.00%; true probability ≥ 30% unless net edge ≥ +10 pts and ROI ≥ +60%; props whose L10 hit rate is ≥ 70% while the projection sits below 95% of the L10 average are deleted. Player props are overs only.</p>
+          <p><b>Phase 3 — sizing.</b> Allocation scale 0–10 = ¼-Kelly ÷ 3% of bankroll (props and lines) or ¼-Kelly × variance haircut (0.85 two-leg, 0.70 three-leg) ÷ 2% (parlays). Parlays use only Section 1 survivors, must mix props with game lines when both exist, and bar any pair with negative or redundant correlation; joint probability uses a Gaussian copula (Kirkwood product for three legs). Not in any public feed and therefore not applied: individual defensive ratings, play-type and zone defense, on-court usage %, coaching minute caps. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></section>
       </div></div>`;
     el.hidden = false;
     document.body.classList.add('finder-open');
@@ -246,9 +250,8 @@ const UI = (() => {
     $('#fClose').onclick = () => { clearHash(); closeFinder(); };
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
-    $('#fSort').value = F.sort; $('#fSort').onchange = (e) => { F.sort = e.target.value; updateFinder(true); };
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
-    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const id2 = d.closest('.pick')?.dataset.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
+    $('#fList').addEventListener('toggle', (e) => { const d = e.target; if (d.tagName !== 'DETAILS') return; const pk = d.closest('.pick'); const id2 = pk?.dataset.id || pk?.id; if (!id2) return; if (d.open) openDetails.add(id2); else openDetails.delete(id2); }, true);
     el.scrollTop = 0;
     updateFinder(true);
     APP.focus(id);
@@ -270,49 +273,104 @@ const UI = (() => {
     else if (F.filter === 'line') ps = ps.filter((p) => p.kind !== 'prop' && !p.seg);
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
-    const key = { rating: (p) => p.rating, edge: (p) => p.edge ?? p.lean ?? 0, roi: (p) => p.roi ?? p.lean ?? 0, conf: (p) => p.fair }[F.sort];
-    return [...ps].sort((a, b) => (b.playable - a.playable) || key(b) - key(a)); // buyable first
+    // strict descending order by net mathematical edge (model-only lines by lean)
+    return [...ps].sort((a, b) => (b.netEdge ?? b.lean ?? -1) - (a.netEdge ?? a.lean ?? -1));
   }
 
   const amOf = (pr) => (pr <= 0 || pr >= 1 ? '—' : pr >= 0.5 ? '−' + Math.round(pr / (1 - pr) * 100) : '+' + Math.round((1 - pr) / pr * 100));
+  const P2 = (x) => (x == null || !isFinite(x) ? '—' : (x * 100).toFixed(2) + '%');
+  const SEGL = { Q1: '1st Quarter', Q2: '2nd Quarter', Q3: '3rd Quarter', Q4: '4th Quarter', '1H': '1st Half', '2H': '2nd Half' };
+  // "[Player or Team] — [Selection]"
+  function heading(p, g) {
+    const m = p.m, seg = m.seg ? ` (${SEGL[m.seg]})` : '';
+    const tn = (side) => g[side].full || g[side].name;
+    const other = (side) => (side === 'home' ? 'away' : 'home');
+    switch (p.kind) {
+      case 'prop': { const L = MODEL.LABEL[m.stat] || m.stat; return [m.player || p.data.player.name, `Over ${(m.th.k - 0.5).toFixed(1)} ${L.replace(/^./, (c) => c.toUpperCase())} (${m.th.k}+)`]; }
+      case 'ml': if (m.side === 'tie') return [`${g.away.abbr} @ ${g.home.abbr}`, p.yes ? `${SEGL[m.seg]} Tie` : `No ${SEGL[m.seg]} Tie`]; return [tn(p.yes ? m.side : other(m.side)), `Moneyline${seg}`];
+      case 'spread': return p.yes ? [tn(m.side), `−${m.th.line} Spread${seg}`] : [tn(other(m.side)), `+${m.th.line} Spread${seg}`];
+      case 'total': return [`${g.away.abbr} @ ${g.home.abbr}`, `${p.yes ? 'Over' : 'Under'} ${m.th.line} Total Points${seg}`];
+      case 'teamtotal': return [tn(m.side), `${p.yes ? 'Over' : 'Under'} ${m.th.line} Team Points${seg}`];
+      case 'margin': { const r = m.range ? (m.range[1] === Infinity ? `${m.range[0]}+` : `${m.range[0]}–${m.range[1]}`) : ''; return [tn(m.side), `${p.yes ? '' : 'NOT '}Wins by ${r}`]; }
+      case 'ot': return [`${g.away.abbr} @ ${g.home.abbr}`, p.yes ? 'Game Goes to Overtime' : 'No Overtime'];
+    }
+    return [p.label, p.sub];
+  }
+  function marketLine(p, g) {
+    const [, sel] = heading(p, g);
+    if (p.modelOnly) return `${sel} — no live Kalshi quote (buy only at ≤ $${p.maxEntry.toFixed(2)})`;
+    if (p.book) return `${sel} at ${PICKS.fmtAm(p.am)} (${U.esc(p.book)})`;
+    return `${sel} at $${p.price.toFixed(2)} Kalshi ${p.side} ask (${amOf(p.price)})${p.delayed ? ` · price ${U.ago(p.m.snapAt)}` : ''}`;
+  }
+  // three-zone bracket: BUY ZONE ≤ buyMax (≥4.00 pts edge) · FAIR VALUE ZONE ≤ break-even · DO NOT BUY above
   function entryBar(p) {
     const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
-    return `<div class="entry" aria-label="Entry range">
-      <div class="eb"><i class="g" style="width:${pos(p.greatEntry)}"></i><i class="y" style="left:${pos(p.greatEntry)};width:${U.clamp((p.maxEntry - p.greatEntry) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.maxEntry)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
-      <div class="el"><span>Great ≤ <b>${U.cents(p.greatEntry)}${p.book ? ' (' + amOf(p.greatEntry) + ')' : ''}</b></span><span>Max entry <b>${U.cents(p.maxEntry)}${p.book ? ' (' + amOf(p.maxEntry) + ')' : ''}</b></span><span class="bad">Too expensive ≥ <b>${Math.round(p.maxEntry * 100) + 1}¢</b></span></div>
+    const am = (v) => (p.book ? ` (${amOf(v)})` : '');
+    return `<div class="entry" aria-label="Price-to-value bracket">
+      <div class="eb"><i class="g" style="width:${pos(p.buyMax)}"></i><i class="y" style="left:${pos(p.buyMax)};width:${U.clamp((p.fairMax - p.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(p.fairMax)}"></i>${p.price != null ? `<b class="now" style="left:${pos(p.price)}"></b>` : ''}<b class="fair" style="left:${pos(p.fair)}"></b></div>
+      ${(() => { const bt = Math.floor(p.buyMax * 100) / 100, ft = Math.max(bt, Math.floor(p.fairMax * 100) / 100); return `<div class="el"><span>BUY ZONE ≤ <b>$${bt.toFixed(2)}${am(bt)}</b></span>${ft > bt ? `<span>FAIR VALUE $${(bt + 0.01).toFixed(2)}–$${ft.toFixed(2)}</span>` : ''}<span class="bad">DO NOT BUY ≥ <b>$${(ft + 0.01).toFixed(2)}${am(ft + 0.01)}</b></span></div>`; })()}
     </div>`;
   }
-
   function pickHTML(p, g) {
     const fe = PICKS.feed(g.id).find((e) => e.key === p.id);
-    const ev = PICKS.evidence(p, g);
+    const ev = p.modelOnly ? null : PICKS.evidence(p, g);
     const chips = [];
     if (p.live) chips.push('<span class="chipx live">LIVE</span>');
     if (p.lag) chips.push('<span class="chipx lag">LAG</span>');
-    if (fe && fe.active && Date.now() - fe.firstSeen < 90e3) chips.push('<span class="chipx new">NEW</span>');
+    if (p.playable) chips.push('<span class="chipx new">BUY ZONE</span>');
     if (p.delayed) chips.push(`<span class="chipx delayed">KALSHI · ${Math.max(1, Math.round(p.delayed))}m DELAY</span>`);
-    if (p.modelOnly) chips.push('<span class="chipx model">MODEL · NO LIVE PRICE</span>');
-    else if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
-    if (!p.playable && !p.modelOnly) chips.push('<span class="chipx pass">PASS</span>');
-    return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.playable ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
+    if (p.book) chips.push(`<span class="chipx book">${U.esc(p.book.toUpperCase())}</span>`);
+    if (fe) chips.push(`<span>logged ${U.ago(fe.firstSeen)} · ${U.esc(fe.periodTag)}</span>`);
+    const [who, sel] = heading(p, g);
+    const evd = ev || PICKS.evidence(p, g);
+    return `<article class="pick rep tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${U.esc(p.id)}">
       <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span>
-        <span class="pk-t"><b>${U.esc(p.label)}</b><small>${U.esc(p.sub)}</small><small class="buy">${p.book ? 'Bet' : 'Buy'} <b>${p.book ? U.esc(p.label) : p.side}</b>${p.book ? ' at ' + U.esc(p.book) : ` on “${U.esc(p.m.sub || p.m.title)}”`}</small></span>
+        <span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b><small>${U.esc(p.sub)}</small></span>
         <span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
-      <div class="pk-s">
-        <div><label>Confidence</label><b>${U.pct(p.fair)}</b></div>
-        <div><label>Real price</label><b>${U.cents(p.fair)}</b></div>
-        ${p.modelOnly ? `<div><label>Buy if ≤</label><b>${U.cents(p.maxEntry)}</b></div><div><label>${p.data.fp.liveBase ? 'Live swing' : 'Lean'}</label><b class="pos">+${(p.lean * 100).toFixed(1)}</b></div>`
-        : `<div><label>${p.book ? U.esc(p.book) : 'Kalshi ask'}</label><b>${p.book ? PICKS.fmtAm(p.am) : U.cents(p.price)}</b></div><div><label>Edge</label><b class="${p.edge > 0 ? 'pos' : 'neg'}">${U.signed(p.edge * 100, 1)}¢</b></div>`}
-      </div>
+      <ul class="facts">
+        <li><label>Verified Roster/Injury Status</label><span>${U.esc(evd.status)}</span></li>
+        <li><label>Current Market Line / Kalshi Ask Contract Price</label><span>${U.esc(marketLine(p, g))}</span></li>
+        ${p.modelOnly ? '' : `<li><label>Market Implied Winning Probability</label><b>${P2(p.implied)}</b></li>`}
+        <li><label>Algorithmic True Winning Probability</label><b>${P2(p.fair)}</b></li>
+        ${p.modelOnly ? '' : `<li><label>Net Mathematical Inefficiency Edge</label><b class="${p.netEdge >= 0 ? 'pos' : 'neg'}">${U.signed(p.netEdge * 100, 2)}%</b></li>
+        <li><label>Volumetric Allocation Scale (0-10)</label><b>${p.scale.toFixed(1)}</b><small>¼-Kelly ${(p.kelly * 100).toFixed(2)}% of bankroll</small></li>`}
+        ${p.reason ? `<li class="rej"><label>Stress-test result</label><span>REJECTED — ${U.esc(p.reason)}</span></li>` : ''}
+      </ul>
       ${entryBar(p)}
-      <div class="pk-m">${chips.join('')}${p.modelOnly ? '<span>Compare with the live price on Kalshi or Robinhood</span>' : `<span>ROI ${U.signed(p.roi * 100, 0)}%</span><span>¼-Kelly ${(p.kelly * 100).toFixed(1)}%</span>${p.book ? '' : `<span>Spread ${Math.round(p.liq.spread * 100)}¢</span>`}`}<span>${fe ? 'Found ' + U.ago(fe.firstSeen) + (fe.periodTag ? ' · ' + fe.periodTag : '') : ''}</span></div>
-      <details${openDetails.has(p.id) ? ' open' : ''}><summary>Why — ${ev.length} data points</summary><ul>${ev.map((e) => `<li class="ev-${e.k}">${U.esc(e.t)}</li>`).join('')}</ul></details>
+      <div class="pk-m">${chips.join('')}</div>
+      <details${openDetails.has(p.id) ? ' open' : ''}><summary>Data-Driven Strategic Evidence</summary><ul class="evs">${evd.sections.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
     </article>`;
+  }
+
+  // ---------- Section 2: parlays ----------
+  function parlayHTML(c, idx) {
+    const id = 'px-' + c.legs.map((l) => l.p.id).join('|').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+    const legs = c.legs.map((l, i) => { const [who, sel] = heading(l.p, l.g); return `<li><label>Leg ${i + 1}</label><span>${U.esc(who)} — ${U.esc(sel)} <em>(${l.g.away.abbr}@${l.g.home.abbr}, ${l.p.book ? PICKS.fmtAm(l.p.am) : '$' + l.p.price.toFixed(2)}, true ${P2(l.p.fair)})</em></span></li>`; }).join('');
+    const pos = (v) => U.clamp(v * 100, 0, 100).toFixed(1) + '%';
+    const rep = PARLAY.report(c);
+    return `<article class="pick rep parlay" id="${id}">
+      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span>
+        <span class="pk-t"><b>${c.legs.length}-Leg Optimal High-Profitability Parlay</b><small>Cumulative Edge Score: ${(c.edge * 100).toFixed(2)}</small></span></div>
+      <ul class="facts">${legs}
+        <li><label>Combined Market Odds (legs at current asks)</label><b>${PARLAY.toAm(c.mkt)}</b></li>
+        <li><label>Market Implied Combined Parlay Probability</label><b>${P2(c.mkt)}</b></li>
+        <li><label>Algorithmic True Combined Parlay Probability</label><b>${P2(c.trueP)}</b></li>
+        <li><label>Net Mathematical Compound Edge</label><b class="pos">${U.signed(c.edge * 100, 2)}%</b></li>
+        <li><label>Volumetric Allocation Scale (0-10)</label><b>${c.scale.toFixed(1)}</b><small>¼-Kelly × ${c.legs.length === 3 ? '0.70' : '0.85'} = ${(c.kelly * 100).toFixed(2)}% of bankroll</small></li>
+      </ul>
+      <div class="entry"><div class="eb"><i class="g" style="width:${pos(c.buyMax)}"></i><i class="y" style="left:${pos(c.buyMax)};width:${U.clamp((c.fairMax - c.buyMax) * 100, 0, 100).toFixed(1)}%"></i><i class="r" style="left:${pos(c.fairMax)}"></i><b class="now" style="left:${pos(c.mkt)}"></b></div>
+        <div class="el"><span>BUY TICKET ZONE: ${PARLAY.toAm(c.buyMax)} or longer (≤ $${c.buyMax.toFixed(3)}/$1)</span><span>FAIR VALUE: ${PARLAY.toAm(c.fairMax)} to ${PARLAY.toAm(c.buyMax)}</span><span class="bad">DO NOT BUY: shorter than ${PARLAY.toAm(c.fairMax)}</span></div></div>
+      <details${openDetails.has(id) ? ' open' : ''}><summary>Mathematical Synergy &amp; Correlation Analysis</summary><ul class="evs">${rep.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul></details>
+    </article>`;
+  }
+  function parlaysHTML(res, empty) {
+    if (!res.two.length && !res.three.length) return `<p class="muted small">${empty}</p>`;
+    return (res.two.length ? `<h4 class="subh">2-leg</h4>` + res.two.map(parlayHTML).join('') : '') + (res.three.length ? `<h4 class="subh">3-leg</h4>` + res.three.map(parlayHTML).join('') : '');
   }
 
   function renderFeed(g) {
     const items = PICKS.feed(g.id).slice(0, 25);
-    $('#fFeed').innerHTML = items.length ? items.map((e) => `<li class="${e.active ? 'act' : 'gone'}"><time>${U.ago(e.firstSeen)}</time><span><b>${U.esc(e.label)}</b> · buy ${e.side} @ ${U.cents(e.entry)} <em>fair ${U.cents(e.fair0)}, edge ${U.signed(e.edge0 * 100, 1)}¢</em>${e.lag ? ' <span class="chipx lag">LAG</span>' : ''}</span><small>${e.periodTag}${e.active ? ' · open' : ' · faded after ' + dur(e.closedAt - e.firstSeen)}</small></li>`).join('')
+    $('#fFeed').innerHTML = items.length ? items.map((e) => `<li class="${e.active ? 'act' : 'gone'}"><time>${U.ago(e.firstSeen)}</time><span><b>${U.esc(e.label)}</b> · buy ${e.side} @ ${U.cents(e.entry)} <em>true ${(e.fair0 * 100).toFixed(2)}%, edge ${U.signed(e.edge0 * 100, 2)}%</em>${e.lag ? ' <span class="chipx lag">LAG</span>' : ''}</span><small>${e.periodTag}${e.active ? ' · open' : ' · faded after ' + dur(e.closedAt - e.firstSeen)}</small></li>`).join('')
       : `<li class="muted">No edges yet. New ones are logged here with the game clock and how long ago they opened.</li>`;
   }
 
@@ -396,18 +454,22 @@ const UI = (() => {
     const now = Date.now();
     if (force || (now - lastListRender > 2500 && !busy())) {
       lastListRender = now;
-      const ps = ev ? filtered(ev.picks) : [];
+      const surv = ev ? filtered(ev.survivors || []) : [];
+      const rej = ev ? filtered((ev.picks || []).filter((p) => !p.survivor)) : [];
       const ms = ev && !F.playable ? filtered(ev.models || []) : [];
-      const total = ev ? ev.picks.length : 0;
-      $('#fCount').textContent = ev ? (total ? `${ev.picks.filter((p) => p.playable).length} +EV of ${total} priced` : `${(ev.models || []).length} model picks`) : '';
+      const au = ev?.audit;
+      $('#fCount').textContent = ev ? `${au.survived} survived of ${au.priced + au.roster} priced` : '';
       $('#fUpd').textContent = ev ? 'updated ' + U.ago(ev.at) : '';
       const pend = ev?.pending?.length || 0;
       const rec = INTEL.get(g.id);
       let html = kalshiNote(g);
-      if (ps.length) html += ps.slice(0, 50).map((p) => pickHTML(p, g)).join('');
-      if (pend) html += `<p class="muted small">${pend} more prop markets are waiting on game logs.</p>`;
-      if (ms.length) html += `<h4 class="subh">Model picks — no live price on this line yet</h4><p class="muted small">Best lean per player and stat on Kalshi's standard lines, ranked. Enter only at or below the Buy-if price.</p>` + ms.slice(0, 30).map((p) => pickHTML(p, g)).join('');
-      if (!ps.length && !ms.length) html += `<p class="muted">${rec?.loading || !rec ? 'Loading game logs and injury reports to build picks…' : g.state === 'post' ? 'This game is final.' : 'No picks match this filter.'}</p>`;
+      if (au) html += `<p class="audit">Stress-test matrix: ${au.priced + au.roster} priced assets → <b>${au.survived} survived</b> · rejected: edge &lt; +4.00% ${au.edge} · true probability &lt; 30% ${au.floor} · trend sanitized ${au.trend} · roster unverified/OUT ${au.roster}. Sorted by net edge, highest first.</p>`;
+      if (surv.length) html += surv.slice(0, 40).map((p) => pickHTML(p, g)).join('');
+      else html += `<p class="muted">${!rec || !INTEL.reportLoaded(rec) ? 'Holding all picks until the game-day injury report is loaded (Phase 1).' : g.state === 'post' ? 'This game is final.' : 'Zero assets cleared every stress test at current prices.'}</p>`;
+      if (pend) html += `<p class="muted small">${pend} prop markets waiting on game logs.</p>`;
+      if (rej.length && !F.playable) html += `<details class="rejbox"><summary>Discarded by stress tests (${rej.length})</summary>${rej.slice(0, 25).map((p) => { const [w, sl] = heading(p, g); return `<div class="rejrow"><b>${U.esc(w)} — ${U.esc(sl)}</b><span>implied ${P2(p.implied)} · true ${P2(p.fair)} · ${U.esc(p.reason)}</span></div>`; }).join('')}</details>`;
+      if (ms.length) html += `<details class="rejbox"><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>` + ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') + `</details>`;
+      $('#fParlays').innerHTML = parlaysHTML(PARLAY.build((ev?.survivors || []).map((p) => ({ p, g })), { pool: 12, max: 5 }), 'No 2- or 3-leg combination from this game clears +4.00% compound edge with non-negative correlation.');
       $('#fList').innerHTML = html;
       const bl = buyLists([g]);
       $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} to buy at current prices` : 'nothing to buy right now';
@@ -418,7 +480,7 @@ const UI = (() => {
     }
     if (force || (now - lastChartRender > 4000 && !busy())) {
       lastChartRender = now;
-      const priced = ev ? filtered(ev.picks) : [];
+      const priced = ev ? filtered(ev.picks.filter((p) => !p.book || true)) : [];
       const lean = !priced.length;
       const ps = lean ? (ev ? filtered(ev.models || []) : []) : priced;
       CHART.render($('#fChart'), ps, { lean, onPick: (id) => { const t = document.getElementById('pk-' + id.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } } });

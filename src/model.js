@@ -230,7 +230,12 @@ const MODEL = (() => {
     const last5 = games.slice(0, 5);
     let minProj = 0.6 * U.wmean(games.map((r) => r.min), w) + 0.4 * U.mean(last5.map((r) => r.min));
     const minBase = minProj;
-    if (ctx.b2b) { minProj *= 0.965; notes.push({ k: 'b2b', t: 'Second night of a back-to-back (−3.5% minutes)' }); }
+    const fat = ctx.fat || { minF: 1, effF: 1, flags: [] };
+    if (fat.minF !== 1) minProj *= fat.minF;
+    // usage proxy per minute: (FGA + 0.44·FTA + TOV) / MIN
+    const ug = games.filter((r) => r.fga != null && r.fta != null);
+    const usage = (arr) => { const m = U.sum(arr.map((r) => r.min)); return m ? U.sum(arr.map((r) => r.fga + 0.44 * r.fta + (r.tov || 0))) / m : null; };
+    const usageInfo = { all: ug.length >= 3 ? usage(ug) : null, l5: ug.length >= 3 ? usage(ug.slice(0, 5)) : null, mates: [] };
     const sp = Math.abs(ctx.spreadTeam || 0);
     if (sp > 8 && minProj > 26) { const f = Math.max(0.9, 1 - 0.006 * (sp - 8)); minProj *= f; notes.push({ k: 'blowout', t: `Blowout risk (spread ${sp.toFixed(1)}) trims starter minutes ${(100 - f * 100).toFixed(1)}%` }); }
 
@@ -249,13 +254,16 @@ const MODEL = (() => {
       const without = pool.filter((r) => !mDates.has(Math.floor(r.date / 864e5)));
       const withG = pool.filter((r) => mDates.has(Math.floor(r.date / 864e5)));
       const mateAvg = U.mean(mlogs.slice(0, 15).map((r) => r.pts));
+      const mw = mate.w ?? 1; // OUT = 1, DOUBTFUL = 0.75
       if (without.length >= 2 && withG.length >= 3) {
         const parts = [];
+        const uW = usage(without.filter((r) => r.fga != null)), uWi = usage(withG.filter((r) => r.fga != null));
+        if (uW != null && uWi != null) usageInfo.mates.push({ name: mate.name, code: mate.code || 'OUT', with: uWi, without: uW, n: without.length, nWith: withG.length });
         for (const s of STATS) {
           const rw = U.sum(without.map((r) => r[s])) / Math.max(1, U.sum(without.map((r) => r.min)));
           const rwi = U.sum(withG.map((r) => r[s])) / Math.max(1, U.sum(withG.map((r) => r.min)));
           if (rwi > 0) {
-            const wt = without.length / (without.length + 4);
+            const wt = mw * without.length / (without.length + 4);
             const f = U.clamp(1 + wt * (rw / rwi - 1), 0.85, 1.3);
             mateFx[s] *= f;
             if (s === 'pts' || s === 'ast' || s === 'reb') parts.push(`${SHORT[s]} ${U.signed((f - 1) * 100, 0)}%`);
@@ -263,24 +271,28 @@ const MODEL = (() => {
         }
         const minW = U.mean(without.map((r) => r.min)), minWi = U.mean(withG.map((r) => r.min));
         if (isFinite(minW) && isFinite(minWi)) minProj *= U.clamp(1 + (without.length / (without.length + 4)) * (minW / minWi - 1), 0.92, 1.12);
-        mateNotes.push(`${mate.name} OUT — with/without split (${without.length} games without): ${parts.join(', ')}`);
+        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — with/without split, ${without.length} games without vs ${withG.length} with: ${parts.join(', ')}`);
       } else if (isFinite(mateAvg) && mateAvg >= 8) {
         // usage redistribution heuristic
         const teamPts = ctx.teamAvgPts || 114;
         const myPts = U.wmean(games.map((r) => r.pts), w);
         const share = myPts / Math.max(30, teamPts - mateAvg);
         const missedRecent = games.slice(0, 3).every((r) => !mDates.has(Math.floor(r.date / 864e5)));
-        const bump = 0.6 * mateAvg * share * (missedRecent ? 0.5 : 1);
+        const bump = 0.6 * mw * mateAvg * share * (missedRecent ? 0.5 : 1);
         const f = U.clamp(1 + bump / Math.max(3, myPts), 1, 1.18);
         mateFx.pts *= f; mateFx.fg3m *= 1 + (f - 1) * 0.8; mateFx.ast *= 1 + (f - 1) * 0.6; mateFx.reb *= 1 + (f - 1) * 0.4;
-        mateNotes.push(`${mate.name} OUT (${mateAvg.toFixed(1)} ppg) — usage bump ≈ ${U.signed((f - 1) * 100, 0)}% pts${missedRecent ? ' (already missing recent games, half weight)' : ''}`);
+        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official, ${mateAvg.toFixed(1)} ppg) — fewer than 2 games without him in the logs; scoring-share redistribution ${U.signed((f - 1) * 100, 0)}% PTS${missedRecent ? ' (absent from the last 3 games already, half weight)' : ''}`);
       }
     }
     for (const t of mateNotes) notes.push({ k: 'inj', t });
 
-    // environment (market-implied team total vs team's own average)
-    const env = ctx.env || 1;
-    if (Math.abs(env - 1) > 0.01) notes.push({ k: 'env', t: `Scoring environment ${U.signed((env - 1) * 100, 1)}% vs team average (implied team total ${ctx.impliedPts?.toFixed(1) ?? '—'})` });
+    // environment: possession volume × opponent efficiency allowed, blended 50/50 with the market-implied team total
+    const PACE_EXP = { pts: 1, reb: 0.7, ast: 1, fg3m: 1, stl: 1, blk: 0.8 }, DEF_EXP = { pts: 1, fg3m: 0.8, ast: 0.5, reb: 0, stl: 0, blk: 0 };
+    const EFF_EXP = { pts: 1, fg3m: 1.3, ast: 0.4, reb: 0, stl: 0, blk: 0 };
+    const envFor = (s) => {
+      const model = Math.pow(ctx.paceF ?? 1, PACE_EXP[s] ?? 1) * Math.pow(ctx.defF ?? 1, DEF_EXP[s] ?? 0);
+      return ctx.marketF != null ? 0.5 * model + 0.5 * Math.pow(ctx.marketF, ENV_EXP[s] ?? 0.5) : model;
+    };
 
     const proj = {};
     const all = [...STATS, ...Object.keys(COMBO)];
@@ -292,9 +304,9 @@ const MODEL = (() => {
       else {
         const rate = U.sum(games.map((r, i) => vals[i] * w[i])) / U.sum(games.map((r, i) => r.min * w[i]));
         mu = rate * minProj;
-        mu *= Math.pow(env, ENV_EXP[s] ?? 0.5);
+        mu *= envFor(s);
+        mu *= Math.pow(fat.effF ?? 1, EFF_EXP[s] ?? 0);
         mu *= mateFx[s] || 1;
-        if (ctx.b2b) mu *= 0.985;
       }
       // head-to-head
       const h2h = games.filter((r) => r.opp === ctx.opp);
@@ -322,7 +334,8 @@ const MODEL = (() => {
       variance *= 1 + 1 / Math.max(2, nEff);
       proj[s] = { mu, variance, h2hF, haF, n: games.length, nEff, vals };
     }
-    return { proj, minProj, minBase, games, cur, notes, nEff };
+    const env = {}; for (const s of STATS) env[s] = envFor(s);
+    return { proj, minProj, minBase, games, cur, notes, nEff, env, usage: usageInfo, fat, l5min: U.mean(last5.map((r) => r.min)) };
   }
 
   function probAtLeast(stat, k, mu, variance) {

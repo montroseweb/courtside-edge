@@ -31,7 +31,7 @@ const INTEL = (() => {
   async function logs(espnId, season, current) {
     const k = `${espnId}:${season}`;
     if (LOGS.has(k)) return LOGS.get(k);
-    const sk = 'gl:' + k;
+    const sk = 'gl2:' + k;
     const c = !NET.isDemo() && U.store.get(sk);
     const ttl = current ? 3 * 3600e3 : 5 * 864e5;
     if (c && Date.now() - c.t < ttl) { LOGS.set(k, c.r); return c.r; }
@@ -39,13 +39,42 @@ const INTEL = (() => {
     LOGS.set(k, r);
     if (!NET.isDemo() && r.length) {
       // compact form for storage
-      const slim = r.map(({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, stl, blk, tov, pf }) => ({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, stl, blk, tov, pf }));
+      const slim = r.map(({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, fga, fta, stl, blk, tov, pf }) => ({ eventId, date, opp, home, result, season: s, post, min, pts, reb, ast, fg3m, fg3a, fga, fta, stl, blk, tov, pf }));
       if (!U.store.set(sk, { t: Date.now(), r: slim })) { // storage full → evict old gamelogs
-        try { Object.keys(localStorage).filter((x) => x.startsWith('ce:gl:')).slice(0, 40).forEach((x) => localStorage.removeItem(x)); } catch { }
+        try { Object.keys(localStorage).filter((x) => x.startsWith('ce:gl')).slice(0, 40).forEach((x) => localStorage.removeItem(x)); } catch { }
       }
     }
     return r;
   }
+  // ---------- team pace / efficiency ----------
+  const PACE = new Map(); // teamId → {pace, ...} | null
+  async function teamPace(teamId) {
+    if (PACE.has(teamId)) return PACE.get(teamId);
+    const c = !NET.isDemo() && U.store.get('pace:' + teamId);
+    if (c && Date.now() - c.t < 12 * 3600e3) { PACE.set(teamId, c.v); return c.v; }
+    const v = await ESPN.teamStats(teamId).catch(() => null);
+    PACE.set(teamId, v);
+    if (!NET.isDemo() && v) U.store.set('pace:' + teamId, { t: Date.now(), v });
+    return v;
+  }
+  const LG_PACE = 99.5, LG_PPP = 1.145;
+  function lgPace() { const xs = [...PACE.values()].filter(Boolean).map((v) => v.pace); return (U.sum(xs) + LG_PACE * 4) / (xs.length + 4); }
+  // possessions/game from the team stats feed, else estimated from scoring; ratings per 100 possessions
+  function teamMetrics(teamId) {
+    const st = STATE.standings, t = st?.teams?.[teamId], lgPts = st?.lgPts || 114.5;
+    const shrink = (v, prior) => (t?.gp ? (t.gp * v + 6 * prior) / (t.gp + 6) : prior);
+    const pf = t?.pf ? shrink(t.pf, lgPts) : lgPts, pa = t?.pa ? shrink(t.pa, lgPts) : lgPts;
+    const fed = PACE.get(teamId);
+    const lp = lgPace();
+    const pace = fed?.pace ? shrink(fed.pace, lp) : U.clamp(((pf + pa) / 2) / LG_PPP, 94, 106);
+    return { pace, src: fed?.pace ? 'team stats feed: FGA + 0.44·FTA − OREB + TOV' : 'estimated from scoring; team stats feed unavailable', ortg: pf / pace * 100, drtg: pa / pace * 100, pf, pa, offRank: t?.offRank, defRank: t?.defRank, gp: t?.gp || 0 };
+  }
+  function possModel(g) {
+    const h = teamMetrics(g.home.id), a = teamMetrics(g.away.id), lp = lgPace();
+    const lgRtg = (STATE.standings?.lgPts || 114.5) / lp * 100;
+    return { poss: h.pace * a.pace / lp, paceH: h.pace, paceA: a.pace, lgPace: lp, lgRtg, h, a, src: h.src };
+  }
+
   async function playerLogs(espnId, season) {
     const [a, b] = await Promise.all([logs(espnId, season, true), logs(espnId, season - 1, false)]);
     return [...a, ...b].sort((x, y) => y.date - x.date);
@@ -77,6 +106,7 @@ const INTEL = (() => {
       tasks.push(ESPN.summary(g.id, g).then((s) => { if (s) rec.summary = s; }).catch((e) => { rec.err = e.message; rec.sumAt = Date.now() - sumTTL + 8000; }));
     }
     tasks.push(standings());
+    tasks.push(teamPace(g.home.id), teamPace(g.away.id));
     if (!rec.rosters.home.length) tasks.push(roster(g.home.id).then((r) => (rec.rosters.home = r)));
     if (!rec.rosters.away.length) tasks.push(roster(g.away.id).then((r) => (rec.rosters.away = r)));
     await Promise.all(tasks);
@@ -87,13 +117,63 @@ const INTEL = (() => {
     return rec;
   }
 
+  // ---------- Phase 1: roster/injury verification (official game report only) ----------
+  function normStatus(raw, detail) {
+    const s = String(raw || '').toLowerCase(), t = s + ' ' + String(detail || '').toLowerCase();
+    if (/doubt/.test(s)) return 'DOUBTFUL';
+    if (/question|day-to-day|day to day|dtd|game.?time/.test(s)) return /minute|restrict/.test(t) ? 'MINUTES RESTRICTION' : 'QUESTIONABLE';
+    if (/probable/.test(s)) return 'PROBABLE';
+    if (/out|suspen|inactive|injured reserve/.test(s)) return 'OUT';
+    if (/minute|restrict/.test(t)) return 'MINUTES RESTRICTION';
+    return 'LISTED';
+  }
+  const reportLoaded = (rec) => !!rec?.summary && rec.summary.injuries != null;
   function injuriesFor(rec, g, side) {
-    const tid = g[side].id;
-    const list = rec.summary?.injuries?.[tid] || [];
-    const fromRoster = (rec.rosters[side] || []).filter((p) => p.inj).map((p) => ({ espnId: p.espnId, name: p.name, pos: p.pos, status: p.inj, detail: '' }));
-    const m = new Map();
-    for (const x of [...fromRoster, ...list]) m.set(x.espnId || x.name, x);
-    return [...m.values()];
+    const list = rec?.summary?.injuries?.[g[side].id] || [];
+    return list.map((x) => ({ ...x, code: normStatus(x.status, x.detail) }));
+  }
+  function statusFor(rec, g, side, espnId, name) {
+    const box = STATE.box.get(g.id);
+    const lb = box && (box.byEspn?.get(espnId) || box.players.find((x) => U.nameScore(x.name, name) >= 0.9));
+    if (lb && (lb.min > 0 || lb.oncourt || lb.played)) return { code: 'ACTIVE', ok: true, src: 'in tonight\'s live box score' };
+    if (!reportLoaded(rec)) return { code: 'UNVERIFIED', ok: false, src: 'game-day injury report not loaded yet' };
+    const r = injuriesFor(rec, g, side).find((x) => x.espnId === espnId || U.nameScore(x.name, name) >= 0.95);
+    if (r) return { code: r.code, ok: !/OUT|DOUBTFUL|LISTED/.test(r.code), src: 'official game-day injury report', raw: r.status, detail: r.detail };
+    const ro = (rec.rosters[side] || []).find((x) => x.espnId === espnId);
+    if (ro?.inj && /out|doubt/i.test(ro.inj)) return { code: 'CONFLICT', ok: false, src: `roster feed says "${ro.inj}" but the game report does not list him — props benched` };
+    return { code: 'ACTIVE', ok: true, src: 'not on the game-day injury report' };
+  }
+  // play-probability for a player's own prop (DNP risk on non-protected markets)
+  const PLAY_P = { ACTIVE: 1, PROBABLE: 0.97, QUESTIONABLE: 0.82, 'MINUTES RESTRICTION': 1 };
+  function reportSummary(rec, g, side) {
+    if (!reportLoaded(rec)) return `${g[side].abbr}: report not loaded`;
+    const l = injuriesFor(rec, g, side);
+    return `${g[side].abbr}: ${l.length ? l.map((x) => `${x.name} ${x.code}`).join(', ') : 'no designations'}`;
+  }
+
+  // ---------- Phase 2.3: schedule / travel fatigue matrix ----------
+  function fatigue(rec, g, side) {
+    const out = { known: false, minF: 1, effF: 1, marginPts: 0, flags: [] };
+    const l5 = (rec?.summary?.lastFive?.[g[side].id] || []).filter((e) => e.date && e.date < g.date - 3 * 3600e3).sort((a, b) => b.date - a.date);
+    if (!l5.length) return out;
+    out.known = true;
+    const tk = U.etDateKey(new Date(g.date));
+    const dd = (ms) => { const k = U.etDateKey(new Date(ms)); return Math.round((Date.UTC(+tk.slice(0, 4), +tk.slice(4, 6) - 1, +tk.slice(6, 8)) - Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8))) / 864e5); };
+    const venue = TEAMS.byCode[g.home.code], me = TEAMS.byCode[g[side].code];
+    const last = l5[0], since = dd(last.date);
+    const lastVenue = last.atVs === '@' ? TEAMS.find(last.opp) : me;
+    const in4 = l5.filter((e) => dd(e.date) <= 3).length + 1;
+    const road7 = l5.filter((e) => dd(e.date) <= 6 && e.atVs === '@').length + (side === 'away' ? 1 : 0);
+    const tz = Math.abs((venue?.tz ?? -5) - (lastVenue?.tz ?? -5));
+    const add = (t, minF, effF, pts) => { out.minF *= minF; out.effF *= effF; out.marginPts += pts; out.flags.push(t); };
+    if (since === 1) add('2nd night of a back-to-back (minutes ×0.965, shooting eff ×0.980, −1.5 pts margin)', 0.965, 0.98, -1.5);
+    if (in4 >= 3) add(`${in4 === 3 ? "3rd" : in4 + "th"} game in 4 nights (minutes ×0.985, eff ×0.990, −0.8 pts)`, 0.985, 0.99, -0.8);
+    if (road7 >= 5) add(`${road7}th road game in 7 nights (eff ×0.990, −0.6 pts)`, 1, 0.99, -0.6);
+    if (tz >= 2 && since <= 1) add(`${tz} time zones crossed in ≤24h (eff ×${tz >= 3 ? '0.985' : '0.990'}, −0.5 pts)`, 1, tz >= 3 ? 0.985 : 0.99, -0.5);
+    if (venue?.elev >= 4000 && g[side].code !== g.home.code) add(`visiting altitude ${venue.elev.toLocaleString()} ft (minutes ×0.990, eff ×0.985, −1.0 pts)`, 0.99, 0.985, -1.0);
+    if (since >= 3) add(`${since - 1} days rest (+0.3 pts)`, 1, 1, 0.3);
+    out.since = since; out.in4 = in4; out.road7 = road7; out.tz = tz;
+    return out;
   }
 
   async function loadPlayers(g, rec) {
@@ -114,7 +194,7 @@ const INTEL = (() => {
         }
       }
     }
-    const outs = { home: injuriesFor(rec, g, 'home').filter((x) => /^out/i.test(x.status)), away: injuriesFor(rec, g, 'away').filter((x) => /^out/i.test(x.status)) };
+    const outs = { home: injuriesFor(rec, g, 'home').filter((x) => /OUT|DOUBTFUL/.test(x.code)), away: injuriesFor(rec, g, 'away').filter((x) => /OUT|DOUBTFUL/.test(x.code)) };
     // logs for prop players
     const ids = [...want.keys()].filter((id) => !rec.players.has(id) || Date.now() - rec.players.get(id).at > 3 * 3600e3);
     for (let i = 0; i < ids.length; i += 4) await Promise.all(ids.slice(i, i + 4).map(async (id) => { rec.players.set(id, { ...want.get(id), logs: await playerLogs(id, season), at: Date.now() }); }));
@@ -136,32 +216,43 @@ const INTEL = (() => {
   function project(g, rec) {
     const season = U.seasonFor(g.dateKey);
     const pre = g.pre || MODEL.pregame(g, rec.summary, KALSHI.marketsFor(g.kkey));
+    const pm = possModel(g);
+    rec.poss = pm;
+    rec.fat = { home: fatigue(rec, g, 'home'), away: fatigue(rec, g, 'away') };
     const outs = { home: [], away: [] };
-    for (const o of rec.outLogs?.values() || []) outs[o.side].push(o);
-    const yday = U.addDaysKey(g.dateKey, -1);
+    for (const o of rec.outLogs?.values() || []) {
+      const live = injuriesFor(rec, g, o.side).find((x) => x.espnId === o.espnId);
+      if (live && /OUT|DOUBTFUL/.test(live.code)) outs[o.side].push({ ...o, w: live.code === 'OUT' ? 1 : 0.75, code: live.code });
+    }
     for (const [id, p] of rec.players) {
       const side = p.side, team = g[side], opp = g[side === 'home' ? 'away' : 'home'];
       const spreadTeam = side === 'home' ? pre.spread : -pre.spread;
       const impliedPts = (pre.total + spreadTeam) / 2;
       const avg = teamAvgPts(team.id);
-      const env = U.clamp(impliedPts / avg, 0.85, 1.15);
-      const lastDate = p.logs[0]?.date;
-      const b2b = !!lastDate && U.etDateKey(new Date(lastDate)) === yday;
-      const inj = injuriesFor(rec, g, side).find((x) => x.espnId === id || U.nameScore(x.name, p.name) >= 0.95);
-      const ctx = { season, opp: opp.code, home: side === 'home', teamCode: team.code, env, impliedPts, teamAvgPts: avg, spreadTeam, b2b, outMates: outs[side].filter((o) => o.espnId !== id), status: inj?.status || '' };
+      const hasMkt = pre.src.bookTotal != null || pre.src.kalshiTotal != null;
+      const teamPaceV = side === 'home' ? pm.paceH : pm.paceA;
+      const oppM = side === 'home' ? pm.a : pm.h;
+      const paceF = U.clamp(pm.poss / teamPaceV, 0.9, 1.1);
+      const defF = U.clamp(oppM.drtg / pm.lgRtg, 0.9, 1.1);
+      const marketF = hasMkt ? U.clamp(impliedPts / avg, 0.85, 1.15) : null;
+      const st = statusFor(rec, g, side, id, p.name);
+      const ctx = { season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
       p.ctx = ctx;
-      p.status = inj?.status || '';
+      p.st = st;
+      p.status = st.code === 'ACTIVE' ? '' : st.code;
       p.proj = MODEL.projectPlayer(p.logs, ctx);
       p.splits = splits(p.logs, season);
     }
-    // estimated primary matchup: same position group on the other team, most projected minutes
+    // estimated primary defender: same position group on the other team, most projected minutes; per-36 defensive events
+    const per36 = (q, k) => { const gm = (q.logs || []).filter((r) => r.min >= 4).slice(0, 20); const m = U.sum(gm.map((r) => r.min)); return m ? U.sum(gm.map((r) => r[k] || 0)) / m * 36 : null; };
     for (const [, p] of rec.players) {
       const grp = posGroup(p.pos);
       const oppSide = p.side === 'home' ? 'away' : 'home';
-      const cands = [...rec.players.values()].filter((q) => q.side === oppSide && posGroup(q.pos) === grp && q.proj);
+      const cands = [...rec.players.values()].filter((q) => q.side === oppSide && posGroup(q.pos) === grp && q.proj && q.st?.ok !== false);
       cands.sort((a, b) => b.proj.minProj - a.proj.minProj);
       const ro = (rec.rosters[oppSide] || []).find((q) => posGroup(q.pos) === grp && !outs[oppSide].some((o) => o.espnId === q.espnId));
-      p.matchup = cands[0] ? { name: cands[0].name, pos: cands[0].pos, est: true } : ro ? { name: ro.name, pos: ro.pos, est: true } : null;
+      const d = cands[0];
+      p.matchup = d ? { name: d.name, pos: d.pos, est: true, min: d.proj.minProj, stl36: per36(d, 'stl'), blk36: per36(d, 'blk'), pf36: per36(d, 'pf'), n: Math.min(20, d.proj.games.length) } : ro ? { name: ro.name, pos: ro.pos, est: true } : null;
     }
     rec.projAt = Date.now();
   }
@@ -182,5 +273,5 @@ const INTEL = (() => {
     };
   }
 
-  return { ensure, get, project, injuriesFor, matchPlayer, teamAvgPts, posGroup };
+  return { ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();
