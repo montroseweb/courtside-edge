@@ -25,6 +25,27 @@ raw.githubusercontent.com (CORS-enabled) and labels those prices as delayed.
 
 `#demo` on the URL runs the built-in simulator (real teams, fictional players, simulated prices).
 
+## Install on iPhone
+
+Open `https://raw.githack.com/montroseweb/courtside-edge/main/dist/index.html` in Safari →
+Share → Add to Home Screen. The app runs full-screen, launches from cache, and picks up new
+versions automatically (network-first service worker).
+
+## Matchup scouting (opened game)
+
+From each team's last 4 completed games (ESPN summaries): possessions by venue, fast-break and
+paint points, defense vs position (G/F/C), FG% allowed by shot zone (rim, paint, mid, corner 3,
+above-break 3), eFG% allowed by shot type (catch-and-shoot, off-dribble, drives, cuts/putbacks,
+post-ups) weighted by each player's own scouted shot mix, and the estimated primary defender's
+steal/block rates. Every factor is relative to the opponent's own average and shrunk by sample
+size. ESPN team news (48h) feeds minute limits and starting-role changes; "ruled out" headlines
+bench props until the official report agrees.
+
+## Backtest
+
+`#demo-debug-nofx-seedN` plus Playwright's clock fast-forwards whole simulated games; picks are
+settled against final box scores to measure hit rate, calibration and ROI by gate and policy.
+
 ## Data sources
 
 | Feed | Used for | Poll rate |

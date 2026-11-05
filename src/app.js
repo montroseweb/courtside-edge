@@ -137,6 +137,10 @@ const APP = (() => {
     g.sEff = (g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread) + g.fatAdj;
     g.tEff = g.pre.total;
     g.wp = g.state === 'pre' ? g.pre.pHome : MODEL.pHomeWin(g.ls, g.sEff);
+    if (g.state !== 'pre') {
+      const H = g.wpHist || (g.wpHist = []), el = g.ls.elapsed, last = H[H.length - 1];
+      if (!last || el - last.el >= 0.15 || Math.abs(g.wp - last.wp) >= 0.01) { H.push({ el, wp: g.wp, kp: g.kp }); if (H.length > 700) H.splice(1, 1); }
+    }
     if (g.state === 'in') computeRun(g);
   }
 
@@ -191,6 +195,13 @@ const APP = (() => {
       tasks.push(INTEL.ensure(g, { props: true, focus: true, fast: espnLive }).then((r) => {
         if ((!g.nbaId || (g._boxFail || 0) > 2) && r.summary?.box?.length && g.state !== 'pre') setBox(g, { players: r.summary.box, at: Date.now() }, 'espn');
         if (!g.hasPbp && r.summary?.plays?.length) seedFromEspnPlays(g, r.summary.plays);
+        // seed the win-probability timeline from ESPN's per-play probabilities when opening a game mid-way
+        const firstEl = g.wpHist?.[0]?.el ?? Infinity;
+        if (firstEl > 2 && r.summary?.wp?.length && r.summary.plays?.length) {
+          const byId = new Map(r.summary.plays.map((p) => [p.id, p]));
+          const seed = r.summary.wp.map((w) => { const pl = byId.get(w.playId); return pl ? { el: U.minutesElapsed(pl.period, pl.clockSec ?? 0), wp: w.home, kp: null } : null; }).filter((d) => d && d.el < firstEl);
+          if (seed.length > 5) g.wpHist = seed.filter((_, i) => i % Math.ceil(seed.length / 300) === 0).concat(g.wpHist || []);
+        }
         STATE.liveAt = Date.now();
       }));
     } else if (rec && Date.now() - rec.projAt > 30000) INTEL.project(g, rec);
@@ -365,7 +376,7 @@ const APP = (() => {
     if (running) return; running = true;
     // installable app: cache the shell for instant launch from the home screen
     if ('serviceWorker' in navigator && location.protocol === 'https:' && !inArtifact()) navigator.serviceWorker.register('./sw.js').catch(() => { });
-    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U };
+    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U, DEMO, PARLAY, SCOUT };
     UI.init();
     document.fonts?.ready?.then(() => COURT.invalidate());
     window.addEventListener('hashchange', route);

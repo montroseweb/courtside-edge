@@ -417,7 +417,8 @@ const COURT = (() => {
       draw(inst, now);
     }
   }
-  function start() { if (!raf) raf = requestAnimationFrame(loop); }
+  const noFx = /nofx/.test(location.hash); // test harness: skip animation frames
+  function start() { if (!raf && !noFx) raf = requestAnimationFrame(loop); }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else start(); });
 
   return { create, synthShot, mapShot, instances, invalidate: () => { staticCache.clear(); for (const i of instances) i.dirty = true; } };

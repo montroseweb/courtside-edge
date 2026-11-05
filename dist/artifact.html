@@ -508,6 +508,76 @@ details.pane:not([open]) > summary h3 { border-bottom: 0; }
 .rcol ul.news { margin-top: 6px; font-size: 11px; color: var(--ink-2); }
 .rcol ul.news li { padding-left: 8px; border-left: 2px solid var(--aero); }
 
+/* ---------- quarter scoreboard (iOS 6 / Vista LCD) ---------- */
+.qtab { margin-top: 8px; overflow-x: auto; }
+.qt { width: 100%; border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; border-radius: 7px; overflow: hidden;
+  background: linear-gradient(180deg, #1c2734 0%, #0b1119 50%, #05080c 51%, #0d141d 100%); border: 1px solid rgba(0, 0, 0, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 2px 8px rgba(0, 0, 0, 0.5); }
+.qt th, .qt td { padding: 5px 4px; text-align: center; font: 600 17px/1 var(--f-display); color: #cfd9e4; border-left: 1px solid rgba(255, 255, 255, 0.05); }
+.qt thead th { font: 600 10px/1 var(--f-body); letter-spacing: 0.08em; color: var(--ink-3); padding: 6px 4px 4px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0)); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.qt tbody th { text-align: left; padding-left: 8px; font: 600 16px/1 var(--f-display); color: #fff; letter-spacing: 0.04em; white-space: nowrap; border-left: 0; }
+.qt tbody tr + tr td, .qt tbody tr + tr th { border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.qt .qsw { display: inline-block; width: 4px; height: 14px; border-radius: 2px; background: var(--c); margin-right: 6px; vertical-align: -2px; box-shadow: 0 0 6px var(--c); }
+.qt td.lead { color: #fff; text-shadow: 0 0 10px rgba(255, 255, 255, 0.55); }
+.qt th.cur, .qt td.cur { background: rgba(255, 196, 70, 0.10); }
+.qt td.cur { color: #ffcf5a; text-shadow: 0 0 8px rgba(255, 190, 60, 0.7); animation: qpulse 1.6s ease-in-out infinite; }
+@keyframes qpulse { 50% { text-shadow: 0 0 2px rgba(255, 190, 60, 0.3); } }
+.qt .tot { background: linear-gradient(180deg, rgba(73, 176, 255, 0.18), rgba(73, 176, 255, 0.05)); color: #fff; font-size: 19px; border-left: 1px solid rgba(73, 176, 255, 0.35); }
+.qt thead .tot { color: var(--aero); font-size: 10px; }
+.qt .half { color: #b9c9da; background: rgba(255, 255, 255, 0.025); }
+.qt thead .half { color: var(--ink-3); }
+.qt td.half.lead { color: #fff; }
+/* ---------- win-probability timeline ---------- */
+.wpt:empty { display: none; }
+.wpt { margin-top: 8px; padding: 6px 8px 4px; border-radius: 7px; background: linear-gradient(180deg, #121c28, #070b11); border: 1px solid rgba(0, 0, 0, 0.85); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+.wpt-h { display: flex; justify-content: space-between; font: 600 13px/1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 3px; }
+.wpt-h .wleg { font: 10px var(--f-body); letter-spacing: 0; text-transform: none; color: var(--ink-3); display: flex; align-items: center; gap: 4px; }
+.wpt-h i { display: inline-block; width: 12px; height: 2px; }
+.wpt-h .lm { background: #fff; } .wpt-h .lk { background: repeating-linear-gradient(90deg, var(--warn) 0 3px, transparent 3px 5px); margin-left: 8px; }
+.wpsvg { display: block; width: 100%; height: auto; }
+.wpsvg .wpq { stroke: rgba(255, 255, 255, 0.08); }
+.wpsvg .wpm { stroke: rgba(255, 255, 255, 0.3); stroke-dasharray: 2 3; }
+.wpsvg .wpl { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.6)); }
+.wpsvg .wpk { fill: none; stroke: var(--warn); stroke-width: 1.2; stroke-dasharray: 3 2; opacity: 0.85; }
+.wpsvg .wpd { fill: #fff; filter: drop-shadow(0 0 4px #fff); }
+.wpsvg .wpx { fill: var(--ink-3); font: 9px var(--f-body); }
+/* ---------- 2K avatar ---------- */
+.av { position: relative; width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; overflow: visible;
+  background: radial-gradient(circle at 50% 35%, #33465c, #101924 70%); border: 2px solid #8d99a7; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7), inset 0 2px 4px rgba(255, 255, 255, 0.2); }
+.av img { width: 100%; height: 100%; object-fit: cover; object-position: center 15%; border-radius: 50%; }
+.av img.tl { object-fit: contain; padding: 5px; }
+.av i { font: 600 18px/1 var(--f-display); font-style: normal; color: #e9f1fa; letter-spacing: 0.02em; }
+.av i.tp { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; font-size: 14px; background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.45), transparent 45%), linear-gradient(135deg, var(--c) 0 55%, var(--c2) 55%); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+.av s { position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--c); opacity: 0.55; pointer-events: none; }
+.av b { position: absolute; bottom: -6px; right: -8px; min-width: 24px; padding: 2px 3px 1px; border-radius: 5px; font: 700 13px/1 var(--f-display); text-align: center; color: #10151c;
+  background: linear-gradient(160deg, #e8edf3, #8d99a7); border: 1px solid rgba(0, 0, 0, 0.7); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.av.t-hof { border-color: #b98cff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7), 0 0 12px rgba(185, 140, 255, 0.6); }
+.av.t-hof b { color: #fff; background: linear-gradient(160deg, #e6d2ff 0%, #9b62f5 45%, #5d2bb5 100%); }
+.av.t-gold { border-color: #f4c24f; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7), 0 0 10px rgba(244, 194, 79, 0.5); }
+.av.t-gold b { background: linear-gradient(160deg, #fff1b8 0%, #f4c24f 45%, #a8780e 100%); }
+.av.t-silver { border-color: #cfd8e3; } .av.t-silver b { background: linear-gradient(160deg, #ffffff 0%, #cfd8e3 45%, #7f8b98 100%); }
+.av.t-bronze { border-color: #d38a55; } .av.t-bronze b { background: linear-gradient(160deg, #ffd9bd 0%, #d38a55 45%, #7c4520 100%); }
+.pk-t b { font-size: 14px; }
+.pk-t small { color: var(--ink-2); font-size: 12px; }
+
+/* gel-orb section icons */
+.ico { width: 22px; height: 22px; flex: none; border-radius: 50%; margin-right: 2px; align-self: center; border: 1px solid rgba(0, 0, 0, 0.7);
+  background: var(--ig) center / 13px 13px no-repeat, radial-gradient(circle at 50% 28%, rgba(255, 255, 255, 0.65) 0, rgba(255, 255, 255, 0.12) 45%, transparent 46%), linear-gradient(180deg, #59b8ff, #1667c1);
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), 0 0 8px rgba(73, 176, 255, 0.45); }
+.pane h3 { align-items: center; }
+.i-roster { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M12%203l7%203v5c0%204.5-3%208-7%2010-4-2-7-5.5-7-10V6z%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M8.5%2012l2.5%202.5%204.5-5%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-map { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M4%2020V4M4%2020h16%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Ccircle%20cx%3D%229%22%20cy%3D%2214%22%20r%3D%221.8%22%20fill%3D%22white%22/%3E%3Ccircle%20cx%3D%2213%22%20cy%3D%229%22%20r%3D%221.8%22%20fill%3D%22white%22/%3E%3Ccircle%20cx%3D%2217%22%20cy%3D%226%22%20r%3D%221.8%22%20fill%3D%22white%22/%3E%3C/svg%3E"); }
+.i-buy { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M13%202L5%2013h6l-1%209%208-11h-6z%22%20fill%3D%22white%22/%3E%3C/svg%3E"); }
+.i-list { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M9%206h11M9%2012h11M9%2018h11%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Ccircle%20cx%3D%224.5%22%20cy%3D%226%22%20r%3D%221.4%22%20fill%3D%22white%22/%3E%3Ccircle%20cx%3D%224.5%22%20cy%3D%2212%22%20r%3D%221.4%22%20fill%3D%22white%22/%3E%3Ccircle%20cx%3D%224.5%22%20cy%3D%2218%22%20r%3D%221.4%22%20fill%3D%22white%22/%3E%3C/svg%3E"); }
+.i-parlay { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M10%2014a4%204%200%20005.7%200l3-3a4%204%200%2000-5.7-5.7l-1%201%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M14%2010a4%204%200%2000-5.7%200l-3%203a4%204%200%20005.7%205.7l1-1%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-feed { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%228.5%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M12%207.5V12l3%202%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-board { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M5%2020V12M10%2020V6M15%2020v-9M20%2020V9%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-intel { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2210.5%22%20cy%3D%2210.5%22%20r%3D%226%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M15%2015l5%205%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-notes { --ig: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%228.5%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M12%2011v6M12%207.5v.5%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+.i-buy { background-image: var(--ig), radial-gradient(circle at 50% 28%, rgba(255,255,255,.65) 0, rgba(255,255,255,.12) 45%, transparent 46%), linear-gradient(180deg, #8ff0a8, #1f8c40); box-shadow: inset 0 -2px 4px rgba(0,0,0,.35), 0 0 8px rgba(82,210,115,.5); }
+.i-parlay { background-image: var(--ig), radial-gradient(circle at 50% 28%, rgba(255,255,255,.65) 0, rgba(255,255,255,.12) 45%, transparent 46%), linear-gradient(180deg, #d9b8ff, #5d2bb5); box-shadow: inset 0 -2px 4px rgba(0,0,0,.35), 0 0 8px rgba(185,140,255,.5); }
+.i-roster { background-image: var(--ig), radial-gradient(circle at 50% 28%, rgba(255,255,255,.65) 0, rgba(255,255,255,.12) 45%, transparent 46%), linear-gradient(180deg, #ffd27a, #c27c0e); }
+
 </style>
 <header class="taskbar">
   <div class="orb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#3a1400" stroke-width="1.3"><circle cx="12" cy="12" r="10.2"/><path d="M1.8 12h20.4M12 1.8v20.4M4.6 4.9c3.2 3 3.2 11.2 0 14.2M19.4 4.9c-3.2 3-3.2 11.2 0 14.2"/></svg></div>
@@ -1827,6 +1897,18 @@ const MODEL = (() => {
     return { remSeg, len, hm, am, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
   }
 
+  // live per-team scoring rate (pts/min): pregame implied team rate blended with what the team is actually
+  // scoring tonight; the live share grows with elapsed minutes but regresses hard (basketball rates mean-revert)
+  function teamRate(g, ls, side, sEff, tEff) {
+    const sgn = side === 'home' ? 1 : -1;
+    const pre = U.clamp((tEff + sgn * sEff) / 2 / 48, 1.8, 3.0);
+    const el = ls.elapsed, pts = side === 'home' ? g.home.score : g.away.score;
+    if (el < 3) return { rate: pre, pre, live: null, w: 1 };
+    const live = pts / el, w = 22 / (22 + el);
+    return { rate: U.clamp(w * pre + (1 - w) * live, pre * 0.8, pre * 1.2), pre, live, w };
+  }
+  function lateTeamBump(ls) { return ls.rem < 2 && Math.abs(ls.margin) <= 8 && ls.period >= 4 ? (ls.rem < 1 ? 1.5 : 0.9) : 0; }
+
   // ---------- fair probability for a game-line market ----------
   function lineProb(m, g, ctx) {
     const ls = ctx.ls, sEff = ctx.sEff, tEff = ctx.tEff;
@@ -1844,15 +1926,15 @@ const MODEL = (() => {
         return { p: m.side === 'home' ? pH : pA, mu, sd };
       }
       if (m.kind === 'teamtotal' && th && m.side) {
-        const so = m.side === 'home' ? ss.hm : ss.am;
-        const tmu = so + (tEff / 48 * ss.remSeg) / 2 + sideSign * sEff * (ss.remSeg / 48) / 2, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
-        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
+        const so = m.side === 'home' ? ss.hm : ss.am, tr = teamRate(g, ls, m.side, sEff, tEff);
+        const tmu = so + tr.rate * ss.remSeg, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so, tr };
       }
       if (m.kind === 'spread' && th && m.side) return { p: atLeast(th.k, sideSign * mu, sd), mu: sideSign * mu, sd };
       if (m.kind === 'total' && th) {
-        const preRate = tEff / 48;
-        const tmu = ss.segTotal + preRate * ss.remSeg, tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
-        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
+        const rh = teamRate(g, ls, 'home', sEff, tEff), ra = teamRate(g, ls, 'away', sEff, tEff);
+        const tmu = ss.segTotal + (rh.rate + ra.rate) * ss.remSeg, tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so: ss.segTotal };
       }
       return null;
     }
@@ -1890,11 +1972,11 @@ const MODEL = (() => {
       return { p: atLeast(th.k, d.mu, d.sd), ...d };
     }
     if (m.kind === 'teamtotal' && th && m.side) {
-      const d = totalDist(ls, tEff, g), md = marginDist(ls, sEff);
       const cur = m.side === 'home' ? g.home.score : g.away.score;
-      const remPts = d.mu - ls.total, remMargin = md.mu - ls.margin;
-      const mu = cur + (remPts + sideSign * remMargin) / 2, sd = Math.max(0.8, SIG_TEAM * Math.sqrt(ls.tau));
-      return { p: atLeast(th.k, mu, sd), mu, sd };
+      if (ls.post) return { p: cur >= th.k ? 1 : 0, mu: cur, sd: 0 };
+      const tr = teamRate(g, ls, m.side, sEff, tEff);
+      const mu = cur + tr.rate * ls.rem + lateTeamBump(ls), sd = Math.max(0.8, Math.sqrt(SIG_TEAM * SIG_TEAM * ls.tau + 0.8 * lateVar(ls.rem)));
+      return { p: atLeast(th.k, mu, sd), mu, sd, tr };
     }
     return null;
   }
@@ -2129,7 +2211,7 @@ const MODEL = (() => {
     return { l5: hit(v.slice(0, 5)), l10: hit(v.slice(0, 10)), l20: hit(v.slice(0, 20)), season: hit(cur), streak: first ? streak : -streak, last: v.slice(0, 10), avg5: U.mean(v.slice(0, 5)), avg10: U.mean(v.slice(0, 10)) };
   }
 
-  return { probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
+  return { teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
 })();
 
 /* ---- intel.js ---- */
@@ -2793,6 +2875,20 @@ const PICKS = (() => {
     return out.sort((a, b) => b.rating - a.rating).slice(0, 40);
   }
 
+  // ladder family: rungs of the same underlying bet (one player-stat, one total ladder, one team's spread…)
+  function famKey(m, yes) {
+    const seg = m.seg || 'G', other = (s) => (s === 'home' ? 'away' : 'home');
+    switch (m.kind) {
+      case 'prop': return `prop:${m.espnId || m.player}:${m.stat}`;
+      case 'total': return `total:${seg}:${yes ? 'o' : 'u'}`;
+      case 'teamtotal': return `tt:${seg}:${m.side}:${yes ? 'o' : 'u'}`;
+      case 'spread': return `sp:${seg}:${yes ? m.side : other(m.side)}`;
+      case 'margin': return `mg:${m.side}`;
+      case 'ml': return `ml:${seg}`;
+      default: return m.kind + ':' + m.ticker;
+    }
+  }
+
   function evaluate(g) {
     const rec = INTEL.get(g.id);
     const ls = g.ls || MODEL.liveState(g);
@@ -2851,10 +2947,20 @@ const PICKS = (() => {
       const mmid = MODEL.mid(m);
       if (m.kind === 'prop' && mmid != null && m.yesAsk - m.yesBid <= 0.1) {
         const nEff = data.player.proj.nEff;
-        wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
-        pFair = wModel * pModel + (1 - wModel) * mmid;
         gap = pModel - mmid;
+        wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
+        // the further the model sits from a liquid market, the likelier the model is missing information
+        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.45, 1);
+        pFair = wModel * pModel + (1 - wModel) * mmid;
         if (Math.abs(gap) > 0.25) unc += 0.03;
+      }
+      // live game lines: same market prior (backtest: live lines ran ~4 pts overconfident without it);
+      // a quote that predates the latest score is stale, so it gets little weight (that is the LAG edge)
+      if (m.kind !== 'prop' && !m.book && !ls.pre && mmid != null && m.yesAsk - m.yesBid <= 0.08) {
+        gap = pModel - mmid;
+        wModel = quoteStale ? 0.85 : 0.65;
+        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.5, 1);
+        pFair = wModel * pModel + (1 - wModel) * mmid;
       }
       fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
       data.fp = fp;
@@ -2882,8 +2988,13 @@ const PICKS = (() => {
         const kellyFull = ev > 0 ? ev / (1 - cost) : 0;
         const scale = Math.round(U.clamp((kellyFull * 0.25) / 0.03 * 10 * (1 - Math.min(0.5, unc * 3)), 0, 10) * 10) / 10;
         // ---- Phase 2 gates ----
+        const spreadQ = m.book ? 0 : (m.yesAsk != null && m.yesBid != null ? m.yesAsk - m.yesBid : 1);
+        const bidSide = m.book ? 1 : yes ? m.yesBid : m.noBid;
+        // expected log-growth of full Kelly (KL divergence): balances edge against hit rate
+        const growth = ev > 0 ? fair * Math.log(fair / cost) + (1 - fair) * Math.log((1 - fair) / Math.max(1e-6, 1 - cost)) : 0;
         let reason = null;
-        if (delayed > 10) reason = `PRICE STALE: Kalshi feed ${Math.round(delayed)} min old (> 10 min)`;
+        if (!m.book && (spreadQ > 0.12 || !(bidSide > 0.005))) reason = `ILLIQUID: ${!(bidSide > 0.005) ? 'no resting bid' : `bid-ask spread ${Math.round(spreadQ * 100)}¢`}`;
+        else if (delayed > 10) reason = `PRICE STALE: Kalshi feed ${Math.round(delayed)} min old (> 10 min)`;
         else if (netEdge < 0.04 || ev <= 0) reason = `EDGE ${U.signed(netEdge * 100, 2)}% < +4.00% minimum`;
         else if (fair < 0.30 && !(netEdge >= 0.10 && roi >= 0.6)) reason = `TRUE PROBABILITY ${(fair * 100).toFixed(2)}% < 30.00% floor`;
         else if (trend && trend.l10 >= 0.7 && trend.regress) reason = `TREND SANITIZED: L10 ${trend.hh.l10.h}/${trend.hh.l10.n} but projection ${trend.muAdj.toFixed(1)} < 95% of L10 avg ${trend.hh.avg10.toFixed(1)}`;
@@ -2899,7 +3010,7 @@ const PICKS = (() => {
         out.push({
           id: m.ticker + (yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind, seg: m.seg, stat: m.stat, side: yes ? 'YES' : 'NO',
           label: lb.t, sub: lb.s, price, implied, fair, netEdge, edge: netEdge, ev, cost, fee, roi, be: fairMax, fairMax, maxEntry: buyMax, buyMax, kelly: kellyFull * 0.25, scale, unc, safety, rating, tier,
-          survivor: !reason, reason, trend,
+          survivor: !reason, reason, trend, growth, fam: famKey(m, yes),
           playable: !reason && price <= buyMax + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
           live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
@@ -2911,8 +3022,8 @@ const PICKS = (() => {
     for (const p of out) { const b = best.get(p.ticker); if (!b || p.edge > b.edge) best.set(p.ticker, p); }
     const picks = [...best.values()].sort((a, b) => (b.survivor - a.survivor) || b.netEdge - a.netEdge);
     const survivors = picks.filter((p) => p.survivor);
-    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, roster: rejected.length };
-    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; }
+    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, illiquid: 0, stale: 0, roster: rejected.length };
+    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; else if (/ILLIQUID/.test(p.reason)) audit.illiquid++; else if (/STALE/.test(p.reason)) audit.stale++; }
     const pricedKeys = new Set(picks.filter((p) => p.kind === 'prop').map((p) => `${p.data.player.espnId}:${p.stat}`));
     const models = modelPicks(g, rec, ls, pricedKeys);
     updateFeed(g, picks);
@@ -3624,7 +3735,8 @@ const COURT = (() => {
       draw(inst, now);
     }
   }
-  function start() { if (!raf) raf = requestAnimationFrame(loop); }
+  const noFx = /nofx/.test(location.hash); // test harness: skip animation frames
+  function start() { if (!raf && !noFx) raf = requestAnimationFrame(loop); }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else start(); });
 
   return { create, synthShot, mapShot, instances, invalidate: () => { staticCache.clear(); for (const i of instances) i.dirty = true; } };
@@ -3726,6 +3838,8 @@ const CHART = (() => {
 const DEMO = (() => {
   'use strict';
   const SPEED = 4;                       // game clock runs 4x real time
+  // test harness: '#seedN' in the URL plays a different set of games (default seed keeps the curated slate)
+  const SEED = (typeof location !== 'undefined' && (String(location.hash).match(/seed(\d+)/) || [])[1]) || '';
   const BREAK_MS = 20000, HALF_MS = 45000; // real ms between quarters / at half
   const ESPN_LAG = 3000;                 // ESPN reflects state ~3s older than NBA CDN
   const MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
@@ -3922,7 +4036,7 @@ const DEMO = (() => {
     const g = {
       n, espnId: '4018100' + pad(n), nbaId: '00226001' + pad(n), away: T[aw], home: T[hm], tipReal: tip,
       spreadHome, total, day, isToday, dcode: `${String(day.y).slice(2)}${MON[day.m - 1]}${pad(day.d)}`,
-      rng: mulberry32(fnv('game' + n + aw + hm + (salt || ''))), seq: 0, ev: [], snaps: [], on: { home: [], away: [] }, starters: { home: [], away: [] },
+      rng: mulberry32(fnv('game' + n + aw + hm + (salt || '') + SEED)), seq: 0, ev: [], snaps: [], on: { home: [], away: [] }, starters: { home: [], away: [] },
     };
     g.sim = { phase: 'pre', period: 0, pclock: 720, cursor: tip, home: 0, away: 0, ls: { home: [], away: [] }, poss: 'home', pendingD: null, breakUntil: 0, elapsed: 0 };
     g.box = { home: players(hm).map(blankBox), away: players(aw).map(blankBox) };
@@ -5034,7 +5148,13 @@ const UI = (() => {
   const cards = new Map(); // gameId → {el, court, refs}
   let finder = null;       // {id, court, refs}
   const openDetails = new Set();
-  const F = { filter: 'all', sort: 'edge', playable: false, noCombo: !!U.store.get('nocombo', false) };
+  const F = { filter: 'all', sort: 'edge', playable: false, noCombo: !!U.store.get('nocombo', false), minP: U.store.get('minp2', 0.5), allRungs: !!U.store.get('allrungs', false) };
+  // one rung per ladder (same player-stat, same total, same team's spread…): highest expected Kelly growth
+  function bestRungs(list) {
+    const best = new Map(), out = [];
+    for (const p of list) { if (!p.fam || p.modelOnly) { out.push(p); continue; } const k = p.gameId + '|' + p.fam; const b = best.get(k); if (!b || (p.growth ?? 0) > (b.growth ?? 0)) best.set(k, p); }
+    return out.concat([...best.values()]);
+  }
   const isCombo = (p) => p.kind === 'prop' && !!MODEL.COMBO[p.stat];
   let lastListRender = 0, lastChartRender = 0, lastTicker = 0, lastTickerHTML = '', lastTouch = 0;
   const busy = () => Date.now() - lastTouch < 2500;
@@ -5199,12 +5319,13 @@ const UI = (() => {
     for (const g of games) {
       if (!g.eval || g.state === 'post') continue;
       for (const p of g.eval.picks) {
-        if (!kalshiBuyable(p) || (F.noCombo && isCombo(p))) continue;
+        if (!kalshiBuyable(p) || (F.noCombo && isCombo(p)) || p.fair < F.minP - 1e-9) continue;
         if (p.playable) buy.push({ p, g });
         else if (p.survivor) watch.push({ p, g });
       }
       for (const p of (g.eval.models || []).slice(0, 4)) model.push({ p, g });
     }
+    if (!F.allRungs) { const keep = new Set(bestRungs(buy.map((x) => x.p))); for (let i = buy.length - 1; i >= 0; i--) if (!keep.has(buy[i].p)) buy.splice(i, 1); }
     buy.sort((a, b) => b.p.netEdge - a.p.netEdge);
     watch.sort((a, b) => (a.p.price - a.p.maxEntry) - (b.p.price - b.p.maxEntry));
     model.sort((a, b) => b.p.rating - a.p.rating);
@@ -5239,6 +5360,8 @@ const UI = (() => {
             <div class="tm home"><div><b>${U.esc(g.home.name)}</b><small class="rec">${U.esc(g.home.record)}</small></div>${logoImg(g.home)}</div>
           </div>
           ${wpBarHTML()}
+          <div class="qtab" id="fQtab"></div>
+          <div class="wpt" id="fWpt"></div>
           <div class="probs" id="fProbs"></div>
           <div class="lineq" id="fLines"></div>
         </section>
@@ -5246,16 +5369,18 @@ const UI = (() => {
           <div class="seg" id="fFilter">${[['all', 'All'], ['live', 'Live'], ['prop', 'Props'], ['line', 'Lines'], ['seg', 'Qtrs/Halves']].map(([k, l]) => `<button class="chip${F.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
           <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> Buy zone only</label>
           <label class="chk"><input type="checkbox" id="fNoCombo" ${F.noCombo ? 'checked' : ''}> Hide PRA &amp; combos</label>
+          <label class="chk"><input type="checkbox" id="fBest" ${F.allRungs ? '' : 'checked'}> Best rung only</label>
+          <label class="sel">Min hit <select id="fMinP">${[0.3, 0.4, 0.5, 0.6, 0.7].map((v) => `<option value="${v}"${Math.abs(F.minP - v) < 1e-6 ? ' selected' : ''}>${v * 100}%</option>`).join('')}</select></label>
         </div>
-        <section class="pane roster"><h3>Verified Roster / Injury Status</h3><div id="fRoster"></div></section>
-        <section class="pane"><h3>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
-        <details class="pane fold buynow" id="fBuyBox"><summary><h3>Buy Now<small id="fBuyN"></small></h3></summary><div id="fBuy"></div></details>
-        <details class="pane fold" id="fSec1" open><summary><h3>Section 1 · Main Picks<small id="fUpd"></small></h3></summary><div id="fList" class="plist"></div></details>
-        <details class="pane fold" id="fSec2" open><summary><h3>Section 2 · Optimal Parlays<small id="fParN"></small></h3></summary><div id="fParlays" class="plist"></div></details>
-        <details class="pane fold" id="fFeedBox"><summary><h3>Live Pick Feed<small>buy-zone entries</small></h3></summary><ol id="fFeed" class="feed"></ol></details>
-        <details class="pane fold" id="fBoardBox"><summary><h3>Projection Board</h3></summary><div id="fBoard"></div></details>
-        <details class="pane fold" id="fIntelBox"><summary><h3>Matchup Intel</h3></summary><div id="fIntel" class="intel"></div></details>
-        <details class="pane fold notes"><summary><h3>Risk protocol</h3></summary>
+        <section class="pane roster"><h3><span class="ico i-roster"></span>Verified Roster / Injury Status</h3><div id="fRoster"></div></section>
+        <section class="pane"><h3><span class="ico i-map"></span>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
+        <details class="pane fold buynow" id="fBuyBox"><summary><h3><span class="ico i-buy"></span>Buy Now<small id="fBuyN"></small></h3></summary><div id="fBuy"></div></details>
+        <details class="pane fold" id="fSec1" open><summary><h3><span class="ico i-list"></span>Section 1 · Main Picks<small id="fUpd"></small></h3></summary><div id="fList" class="plist"></div></details>
+        <details class="pane fold" id="fSec2" open><summary><h3><span class="ico i-parlay"></span>Section 2 · Optimal Parlays<small id="fParN"></small></h3></summary><div id="fParlays" class="plist"></div></details>
+        <details class="pane fold" id="fFeedBox"><summary><h3><span class="ico i-feed"></span>Live Pick Feed<small>buy-zone entries</small></h3></summary><ol id="fFeed" class="feed"></ol></details>
+        <details class="pane fold" id="fBoardBox"><summary><h3><span class="ico i-board"></span>Projection Board</h3></summary><div id="fBoard"></div></details>
+        <details class="pane fold" id="fIntelBox"><summary><h3><span class="ico i-intel"></span>Matchup Intel</h3></summary><div id="fIntel" class="intel"></div></details>
+        <details class="pane fold notes"><summary><h3><span class="ico i-notes"></span>Risk protocol</h3></summary>
           <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN); ESPN team news can only bench a player (never activate one). Players not listed are fully active; a player in tonight's live box score is active. Teammate usage shifts apply only to OUT (1.00) and DOUBTFUL (0.75). Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
           <p><b>Phase 2 — stress tests.</b> Possessions = home pace (home games) × away pace (road games) ÷ league, from each team's recent box scores. Volume scales to tonight's possessions; efficiency to the opponent's points allowed per 100 possessions, defense-vs-position, shot-zone and shot-type defense, and transition defense (each shrunk toward league by sample size); all blended 50/50 with the market-implied team total. Usage (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate; minutes ramps after absences and role changes inferred from logs; news-reported minute limits and starting-role changes applied. Fatigue: back-to-back, 3-in-4, road stretches, time zones, altitude. Gates: net edge ≥ +4.00%, true probability ≥ 30% (or edge ≥ +10 and ROI ≥ +60%), trend sanitization, prices ≤ 10 min old. Player props are overs only.</p>
           <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlays use only Section 1 survivors, mix props with game lines when both exist, and bar negative or redundant correlations (Gaussian copula; Kirkwood product for three legs). Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
@@ -5269,6 +5394,8 @@ const UI = (() => {
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
     $('#fNoCombo').onchange = (e) => { F.noCombo = e.target.checked; U.store.set('nocombo', F.noCombo); updateFinder(true); };
+    $('#fBest').onchange = (e) => { F.allRungs = !e.target.checked; U.store.set('allrungs', F.allRungs); updateFinder(true); };
+    $('#fMinP').onchange = (e) => { F.minP = +e.target.value; U.store.set('minp2', F.minP); updateFinder(true); };
     for (const id2 of ['fBuyBox', 'fSec1', 'fSec2', 'fFeedBox', 'fBoardBox', 'fIntelBox']) $('#' + id2).addEventListener('toggle', () => updateFinder(true));
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
     // per-card tabs (History / Evidence): one panel at a time, state kept across refreshes, built on demand
@@ -5322,6 +5449,8 @@ const UI = (() => {
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
     if (F.noCombo) ps = ps.filter((p) => !isCombo(p));
+    ps = ps.filter((p) => p.fair >= F.minP - 1e-9);
+    if (!F.allRungs) ps = bestRungs(ps);
     // strict descending order by net mathematical edge (model-only lines by lean)
     return [...ps].sort((a, b) => (b.netEdge ?? b.lean ?? -1) - (a.netEdge ?? a.lean ?? -1));
   }
@@ -5416,7 +5545,7 @@ const UI = (() => {
       : [[askLabel, p.book ? `${c0(p.price)}<em>${PICKS.fmtAm(p.am)}</em>` : c0(p.price)], ['True Probability', P2(p.fair)], ['Mathematical Edge', U.signed(p.netEdge * 100, 2) + '%', p.netEdge >= 0 ? 'pos' : 'neg'], ['1/4-Kelly % of bankroll', kellyPct(p.kelly)]];
     const showHist = p.kind === 'prop' && p.data.player?.proj;
     return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${pid}">
-      <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span><span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b></span><span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
+      <div class="pk-h">${avatarHTML(p, g)}<span class="pk-t"><b>${U.esc(who)}</b><small>${U.esc(sel)}</small></span><span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
       ${statRow(cells)}
       ${bracket(p.buyMax, p.fairMax, p.price, c0)}
       ${chips.length ? `<div class="pk-m">${chips.join('')}</div>` : ''}
@@ -5443,6 +5572,72 @@ const UI = (() => {
   function parlaysHTML(res, empty) {
     if (!res.two.length && !res.three.length) return `<p class="muted small">${empty}</p>`;
     return (res.two.length ? `<h4 class="subh">2-leg</h4>` + res.two.map(parlayHTML).join('') : '') + (res.three.length ? `<h4 class="subh">3-leg</h4>` + res.three.map(parlayHTML).join('') : '');
+  }
+
+  // ---------- quarter-by-quarter scoreboard: Q1 Q2 Q3 Q4 [OT] TOTAL 1H 2H ----------
+  function qtabHTML(g) {
+    const live = g.state === 'in', post = g.state === 'post';
+    const nP = Math.max(4, g.home.line.length, g.away.line.length, live ? g.period : 0);
+    const cur = live ? g.period : 0;
+    const started = (i) => post || (live && i < g.period);
+    const sum = (line, a, z) => { let t = 0; for (let i = a; i < z; i++) t += line[i] || 0; return t; };
+    const heads = [];
+    for (let i = 0; i < nP; i++) heads.push(i < 4 ? 'Q' + (i + 1) : (i === 4 ? 'OT' : `${i - 3}OT`));
+    const cells = (side) => {
+      const L = g[side].line;
+      const v = [];
+      for (let i = 0; i < nP; i++) v.push(started(i) ? (L[i] ?? 0) : null);
+      v.push(g.state === 'pre' ? null : g[side].score);
+      v.push(started(0) ? sum(L, 0, 2) : null);
+      v.push(started(2) ? sum(L, 2, 4) : null);
+      return v;
+    };
+    const a = cells('away'), h = cells('home');
+    const cls = ['', ...heads.map((_, i) => (i + 1 === cur ? 'cur' : '')), 'tot', 'half', 'half'];
+    const th = ['', ...heads, 'TOTAL', '1H', '2H'];
+    const row = (side, v, o) => `<tr><th><span class="qsw" style="--c:#${U.pairColors(g.away, g.home)[side === 'away' ? 0 : 1]}"></span>${U.esc(g[side].abbr)}</th>${v.map((x, i) => `<td class="${cls[i + 1]}${x != null && o[i] != null && x > o[i] ? ' lead' : ''}">${x == null ? '–' : x}</td>`).join('')}</tr>`;
+    return `<table class="qt"><thead><tr>${th.map((t, i) => `<th class="${cls[i]}">${t}</th>`).join('')}</tr></thead><tbody>${row('away', a, h)}${row('home', h, a)}</tbody></table>`;
+  }
+
+  // ---------- win-probability timeline (model vs Kalshi) ----------
+  function wpTimelineHTML(g) {
+    const H = g.wpHist || [];
+    if (g.state === 'pre' || H.length < 2) return '';
+    const W = 340, Ht = 86, L = 2, R0 = 2, T = 6, B = 14;
+    const end = Math.max(48, H[H.length - 1].el);
+    const x = (el) => L + (el / end) * (W - L - R0), y = (p) => T + (1 - p) * (Ht - T - B);
+    const [ca, ch] = U.pairColors(g.away, g.home);
+    const pts = H.map((d) => `${x(d.el).toFixed(1)},${y(d.wp).toFixed(1)}`).join(' ');
+    const k = H.filter((d) => d.kp != null).map((d) => `${x(d.el).toFixed(1)},${y(d.kp).toFixed(1)}`).join(' ');
+    const mid = y(0.5), last = H[H.length - 1];
+    let s = `<svg viewBox="0 0 ${W} ${Ht}" class="wpsvg" role="img" aria-label="Win probability timeline"><defs>
+      <clipPath id="wpTop"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath><clipPath id="wpBot"><rect x="0" y="${mid}" width="${W}" height="${Ht}"/></clipPath>
+      <linearGradient id="wpH" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#${ch}" stop-opacity=".75"/><stop offset="1" stop-color="#${ch}" stop-opacity=".1"/></linearGradient>
+      <linearGradient id="wpA" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#${ca}" stop-opacity=".1"/><stop offset="1" stop-color="#${ca}" stop-opacity=".75"/></linearGradient></defs>`;
+    for (let q = 12; q < end; q += q < 48 ? 12 : 5) s += `<line x1="${x(q)}" x2="${x(q)}" y1="${T}" y2="${Ht - B}" class="wpq"/>`;
+    s += `<polygon points="${x(H[0].el)},${mid} ${pts} ${x(last.el)},${mid}" fill="url(#wpH)" clip-path="url(#wpTop)"/><polygon points="${x(H[0].el)},${mid} ${pts} ${x(last.el)},${mid}" fill="url(#wpA)" clip-path="url(#wpBot)"/>`;
+    s += `<line x1="${L}" x2="${W - R0}" y1="${mid}" y2="${mid}" class="wpm"/>`;
+    if (k) s += `<polyline points="${k}" class="wpk"/>`;
+    s += `<polyline points="${pts}" class="wpl"/><circle cx="${x(last.el)}" cy="${y(last.wp)}" r="3.2" class="wpd"/>`;
+    ['Q1', 'Q2', 'Q3', 'Q4'].forEach((q, i) => (s += `<text x="${x(i * 12 + 6)}" y="${Ht - 3}" text-anchor="middle" class="wpx">${q}</text>`));
+    s += `<text x="${W - 4}" y="${T + 9}" text-anchor="end" class="wpx">${U.esc(g.home.abbr)} ${Math.round(last.wp * 100)}%</text><text x="${W - 4}" y="${Ht - B - 3}" text-anchor="end" class="wpx">${U.esc(g.away.abbr)} ${Math.round((1 - last.wp) * 100)}%</text></svg>`;
+    return `<div class="wpt-h"><span>Win probability</span><span class="wleg"><i class="lm"></i>model<i class="lk"></i>Kalshi</span></div>${s}`;
+  }
+
+  // ---------- 2K-style avatar: headshot (props) or team plate (lines), rating chip ----------
+  function avatarHTML(p, g) {
+    const tierC = { HOF: 'hof', GOLD: 'gold', SILVER: 'silver', BRONZE: 'bronze' }[p.tier] || 'none';
+    let inner;
+    if (p.kind === 'prop' && p.data?.player) {
+      const pl = p.data.player, side = pl.side, ini = pl.name.split(' ').map((w) => w[0]).slice(0, 2).join('');
+      const col = U.pairColors(g.away, g.home)[side === 'away' ? 0 : 1];
+      inner = !NET.isDemo() && pl.espnId ? `<img src="https://a.espncdn.com/i/headshots/nba/players/full/${U.esc(pl.espnId)}.png" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('i'),{textContent:'${U.esc(ini)}'}))"><s style="--c:#${col}"></s>` : `<i>${U.esc(ini)}</i><s style="--c:#${col}"></s>`;
+    } else {
+      const side = p.kind === 'total' || p.kind === 'ot' ? 'home' : (p.yes ? p.m.side : (p.m.side === 'home' ? 'away' : 'home')) || 'home';
+      const t = g[side] || g.home;
+      inner = t.logo && !NET.isDemo() ? `<img class="tl" src="${U.esc(t.logo)}" alt="" loading="lazy">` : `<i class="tp" style="--c:#${t.color};--c2:#${t.alt}">${U.esc(t.abbr)}</i>`;
+    }
+    return `<span class="av t-${tierC}">${inner}<b>${p.rating}</b></span>`;
   }
 
   // ---------- Verified roster / injury status (once per game) ----------
@@ -5538,6 +5733,8 @@ const UI = (() => {
     if (sh.textContent !== String(g.home.score)) { sh.textContent = g.home.score; bump(sh); }
     $('.lcd .clk b', el).textContent = s.main; $('.lcd .clk small', el).textContent = s.sub;
     updateWP($('.fhero', el), g);
+    const qh = qtabHTML(g), qe = $('#fQtab'); if (qe._h !== qh) { qe.innerHTML = qh; qe._h = qh; }
+    const wh = wpTimelineHTML(g), we = $('#fWpt'); if (we._h !== wh) { we.innerHTML = wh; we._h = wh; }
     $('#fProbs').innerHTML = probsHTML(g);
     $('#fLines').innerHTML = linesHTML(g);
     const ev = g.eval;
@@ -5564,7 +5761,7 @@ const UI = (() => {
         if (ms.length) html += `<details class="rejbox" data-k="unpriced"${openDetails.has('unpriced') ? ' open' : ''}><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>${openDetails.has('unpriced') ? ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') : ''}</details>`;
         set('#fList', html);
       }
-      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p))).map((p) => ({ p, g }));
+      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p)) && p.fair >= F.minP - 1e-9).map((p) => ({ p, g }));
       if ($('#fSec2').open) {
         const pr = PARLAY.build(pool, { pool: 12, max: 5 });
         $('#fParN').textContent = `${pr.two.length + pr.three.length} tickets`;
@@ -5751,6 +5948,10 @@ const APP = (() => {
     g.sEff = (g.sMkt != null ? 0.5 * g.pre.spread + 0.5 * g.sMkt : g.pre.spread) + g.fatAdj;
     g.tEff = g.pre.total;
     g.wp = g.state === 'pre' ? g.pre.pHome : MODEL.pHomeWin(g.ls, g.sEff);
+    if (g.state !== 'pre') {
+      const H = g.wpHist || (g.wpHist = []), el = g.ls.elapsed, last = H[H.length - 1];
+      if (!last || el - last.el >= 0.15 || Math.abs(g.wp - last.wp) >= 0.01) { H.push({ el, wp: g.wp, kp: g.kp }); if (H.length > 700) H.splice(1, 1); }
+    }
     if (g.state === 'in') computeRun(g);
   }
 
@@ -5805,6 +6006,13 @@ const APP = (() => {
       tasks.push(INTEL.ensure(g, { props: true, focus: true, fast: espnLive }).then((r) => {
         if ((!g.nbaId || (g._boxFail || 0) > 2) && r.summary?.box?.length && g.state !== 'pre') setBox(g, { players: r.summary.box, at: Date.now() }, 'espn');
         if (!g.hasPbp && r.summary?.plays?.length) seedFromEspnPlays(g, r.summary.plays);
+        // seed the win-probability timeline from ESPN's per-play probabilities when opening a game mid-way
+        const firstEl = g.wpHist?.[0]?.el ?? Infinity;
+        if (firstEl > 2 && r.summary?.wp?.length && r.summary.plays?.length) {
+          const byId = new Map(r.summary.plays.map((p) => [p.id, p]));
+          const seed = r.summary.wp.map((w) => { const pl = byId.get(w.playId); return pl ? { el: U.minutesElapsed(pl.period, pl.clockSec ?? 0), wp: w.home, kp: null } : null; }).filter((d) => d && d.el < firstEl);
+          if (seed.length > 5) g.wpHist = seed.filter((_, i) => i % Math.ceil(seed.length / 300) === 0).concat(g.wpHist || []);
+        }
         STATE.liveAt = Date.now();
       }));
     } else if (rec && Date.now() - rec.projAt > 30000) INTEL.project(g, rec);
@@ -5979,7 +6187,7 @@ const APP = (() => {
     if (running) return; running = true;
     // installable app: cache the shell for instant launch from the home screen
     if ('serviceWorker' in navigator && location.protocol === 'https:' && !inArtifact()) navigator.serviceWorker.register('./sw.js').catch(() => { });
-    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U };
+    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U, DEMO, PARLAY, SCOUT };
     UI.init();
     document.fonts?.ready?.then(() => COURT.invalidate());
     window.addEventListener('hashchange', route);

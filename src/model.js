@@ -126,6 +126,18 @@ const MODEL = (() => {
     return { remSeg, len, hm, am, segMargin: hm - am, segTotal: hm + am, started: ls.elapsed > a || (ls.elapsed === a && !ls.pre && ls.period > p0) };
   }
 
+  // live per-team scoring rate (pts/min): pregame implied team rate blended with what the team is actually
+  // scoring tonight; the live share grows with elapsed minutes but regresses hard (basketball rates mean-revert)
+  function teamRate(g, ls, side, sEff, tEff) {
+    const sgn = side === 'home' ? 1 : -1;
+    const pre = U.clamp((tEff + sgn * sEff) / 2 / 48, 1.8, 3.0);
+    const el = ls.elapsed, pts = side === 'home' ? g.home.score : g.away.score;
+    if (el < 3) return { rate: pre, pre, live: null, w: 1 };
+    const live = pts / el, w = 22 / (22 + el);
+    return { rate: U.clamp(w * pre + (1 - w) * live, pre * 0.8, pre * 1.2), pre, live, w };
+  }
+  function lateTeamBump(ls) { return ls.rem < 2 && Math.abs(ls.margin) <= 8 && ls.period >= 4 ? (ls.rem < 1 ? 1.5 : 0.9) : 0; }
+
   // ---------- fair probability for a game-line market ----------
   function lineProb(m, g, ctx) {
     const ls = ctx.ls, sEff = ctx.sEff, tEff = ctx.tEff;
@@ -143,15 +155,15 @@ const MODEL = (() => {
         return { p: m.side === 'home' ? pH : pA, mu, sd };
       }
       if (m.kind === 'teamtotal' && th && m.side) {
-        const so = m.side === 'home' ? ss.hm : ss.am;
-        const tmu = so + (tEff / 48 * ss.remSeg) / 2 + sideSign * sEff * (ss.remSeg / 48) / 2, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
-        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
+        const so = m.side === 'home' ? ss.hm : ss.am, tr = teamRate(g, ls, m.side, sEff, tEff);
+        const tmu = so + tr.rate * ss.remSeg, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so, tr };
       }
       if (m.kind === 'spread' && th && m.side) return { p: atLeast(th.k, sideSign * mu, sd), mu: sideSign * mu, sd };
       if (m.kind === 'total' && th) {
-        const preRate = tEff / 48;
-        const tmu = ss.segTotal + preRate * ss.remSeg, tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
-        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd };
+        const rh = teamRate(g, ls, 'home', sEff, tEff), ra = teamRate(g, ls, 'away', sEff, tEff);
+        const tmu = ss.segTotal + (rh.rate + ra.rate) * ss.remSeg, tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
+        return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so: ss.segTotal };
       }
       return null;
     }
@@ -189,11 +201,11 @@ const MODEL = (() => {
       return { p: atLeast(th.k, d.mu, d.sd), ...d };
     }
     if (m.kind === 'teamtotal' && th && m.side) {
-      const d = totalDist(ls, tEff, g), md = marginDist(ls, sEff);
       const cur = m.side === 'home' ? g.home.score : g.away.score;
-      const remPts = d.mu - ls.total, remMargin = md.mu - ls.margin;
-      const mu = cur + (remPts + sideSign * remMargin) / 2, sd = Math.max(0.8, SIG_TEAM * Math.sqrt(ls.tau));
-      return { p: atLeast(th.k, mu, sd), mu, sd };
+      if (ls.post) return { p: cur >= th.k ? 1 : 0, mu: cur, sd: 0 };
+      const tr = teamRate(g, ls, m.side, sEff, tEff);
+      const mu = cur + tr.rate * ls.rem + lateTeamBump(ls), sd = Math.max(0.8, Math.sqrt(SIG_TEAM * SIG_TEAM * ls.tau + 0.8 * lateVar(ls.rem)));
+      return { p: atLeast(th.k, mu, sd), mu, sd, tr };
     }
     return null;
   }
@@ -428,5 +440,5 @@ const MODEL = (() => {
     return { l5: hit(v.slice(0, 5)), l10: hit(v.slice(0, 10)), l20: hit(v.slice(0, 20)), season: hit(cur), streak: first ? streak : -streak, last: v.slice(0, 10), avg5: U.mean(v.slice(0, 5)), avg10: U.mean(v.slice(0, 10)) };
   }
 
-  return { probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
+  return { teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
 })();

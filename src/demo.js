@@ -5,6 +5,8 @@
 const DEMO = (() => {
   'use strict';
   const SPEED = 4;                       // game clock runs 4x real time
+  // test harness: '#seedN' in the URL plays a different set of games (default seed keeps the curated slate)
+  const SEED = (typeof location !== 'undefined' && (String(location.hash).match(/seed(\d+)/) || [])[1]) || '';
   const BREAK_MS = 20000, HALF_MS = 45000; // real ms between quarters / at half
   const ESPN_LAG = 3000;                 // ESPN reflects state ~3s older than NBA CDN
   const MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
@@ -201,7 +203,7 @@ const DEMO = (() => {
     const g = {
       n, espnId: '4018100' + pad(n), nbaId: '00226001' + pad(n), away: T[aw], home: T[hm], tipReal: tip,
       spreadHome, total, day, isToday, dcode: `${String(day.y).slice(2)}${MON[day.m - 1]}${pad(day.d)}`,
-      rng: mulberry32(fnv('game' + n + aw + hm + (salt || ''))), seq: 0, ev: [], snaps: [], on: { home: [], away: [] }, starters: { home: [], away: [] },
+      rng: mulberry32(fnv('game' + n + aw + hm + (salt || '') + SEED)), seq: 0, ev: [], snaps: [], on: { home: [], away: [] }, starters: { home: [], away: [] },
     };
     g.sim = { phase: 'pre', period: 0, pclock: 720, cursor: tip, home: 0, away: 0, ls: { home: [], away: [] }, poss: 'home', pendingD: null, breakUntil: 0, elapsed: 0 };
     g.box = { home: players(hm).map(blankBox), away: players(aw).map(blankBox) };

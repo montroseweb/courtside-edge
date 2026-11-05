@@ -9,7 +9,13 @@ const UI = (() => {
   const cards = new Map(); // gameId → {el, court, refs}
   let finder = null;       // {id, court, refs}
   const openDetails = new Set();
-  const F = { filter: 'all', sort: 'edge', playable: false, noCombo: !!U.store.get('nocombo', false) };
+  const F = { filter: 'all', sort: 'edge', playable: false, noCombo: !!U.store.get('nocombo', false), minP: U.store.get('minp2', 0.5), allRungs: !!U.store.get('allrungs', false) };
+  // one rung per ladder (same player-stat, same total, same team's spread…): highest expected Kelly growth
+  function bestRungs(list) {
+    const best = new Map(), out = [];
+    for (const p of list) { if (!p.fam || p.modelOnly) { out.push(p); continue; } const k = p.gameId + '|' + p.fam; const b = best.get(k); if (!b || (p.growth ?? 0) > (b.growth ?? 0)) best.set(k, p); }
+    return out.concat([...best.values()]);
+  }
   const isCombo = (p) => p.kind === 'prop' && !!MODEL.COMBO[p.stat];
   let lastListRender = 0, lastChartRender = 0, lastTicker = 0, lastTickerHTML = '', lastTouch = 0;
   const busy = () => Date.now() - lastTouch < 2500;
@@ -174,12 +180,13 @@ const UI = (() => {
     for (const g of games) {
       if (!g.eval || g.state === 'post') continue;
       for (const p of g.eval.picks) {
-        if (!kalshiBuyable(p) || (F.noCombo && isCombo(p))) continue;
+        if (!kalshiBuyable(p) || (F.noCombo && isCombo(p)) || p.fair < F.minP - 1e-9) continue;
         if (p.playable) buy.push({ p, g });
         else if (p.survivor) watch.push({ p, g });
       }
       for (const p of (g.eval.models || []).slice(0, 4)) model.push({ p, g });
     }
+    if (!F.allRungs) { const keep = new Set(bestRungs(buy.map((x) => x.p))); for (let i = buy.length - 1; i >= 0; i--) if (!keep.has(buy[i].p)) buy.splice(i, 1); }
     buy.sort((a, b) => b.p.netEdge - a.p.netEdge);
     watch.sort((a, b) => (a.p.price - a.p.maxEntry) - (b.p.price - b.p.maxEntry));
     model.sort((a, b) => b.p.rating - a.p.rating);
@@ -214,6 +221,8 @@ const UI = (() => {
             <div class="tm home"><div><b>${U.esc(g.home.name)}</b><small class="rec">${U.esc(g.home.record)}</small></div>${logoImg(g.home)}</div>
           </div>
           ${wpBarHTML()}
+          <div class="qtab" id="fQtab"></div>
+          <div class="wpt" id="fWpt"></div>
           <div class="probs" id="fProbs"></div>
           <div class="lineq" id="fLines"></div>
         </section>
@@ -221,16 +230,18 @@ const UI = (() => {
           <div class="seg" id="fFilter">${[['all', 'All'], ['live', 'Live'], ['prop', 'Props'], ['line', 'Lines'], ['seg', 'Qtrs/Halves']].map(([k, l]) => `<button class="chip${F.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
           <label class="chk"><input type="checkbox" id="fPlay" ${F.playable ? 'checked' : ''}> Buy zone only</label>
           <label class="chk"><input type="checkbox" id="fNoCombo" ${F.noCombo ? 'checked' : ''}> Hide PRA &amp; combos</label>
+          <label class="chk"><input type="checkbox" id="fBest" ${F.allRungs ? '' : 'checked'}> Best rung only</label>
+          <label class="sel">Min hit <select id="fMinP">${[0.3, 0.4, 0.5, 0.6, 0.7].map((v) => `<option value="${v}"${Math.abs(F.minP - v) < 1e-6 ? ' selected' : ''}>${v * 100}%</option>`).join('')}</select></label>
         </div>
-        <section class="pane roster"><h3>Verified Roster / Injury Status</h3><div id="fRoster"></div></section>
-        <section class="pane"><h3>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
-        <details class="pane fold buynow" id="fBuyBox"><summary><h3>Buy Now<small id="fBuyN"></small></h3></summary><div id="fBuy"></div></details>
-        <details class="pane fold" id="fSec1" open><summary><h3>Section 1 · Main Picks<small id="fUpd"></small></h3></summary><div id="fList" class="plist"></div></details>
-        <details class="pane fold" id="fSec2" open><summary><h3>Section 2 · Optimal Parlays<small id="fParN"></small></h3></summary><div id="fParlays" class="plist"></div></details>
-        <details class="pane fold" id="fFeedBox"><summary><h3>Live Pick Feed<small>buy-zone entries</small></h3></summary><ol id="fFeed" class="feed"></ol></details>
-        <details class="pane fold" id="fBoardBox"><summary><h3>Projection Board</h3></summary><div id="fBoard"></div></details>
-        <details class="pane fold" id="fIntelBox"><summary><h3>Matchup Intel</h3></summary><div id="fIntel" class="intel"></div></details>
-        <details class="pane fold notes"><summary><h3>Risk protocol</h3></summary>
+        <section class="pane roster"><h3><span class="ico i-roster"></span>Verified Roster / Injury Status</h3><div id="fRoster"></div></section>
+        <section class="pane"><h3><span class="ico i-map"></span>Edge Map<small id="fCount"></small></h3><div id="fChart" class="chart"></div></section>
+        <details class="pane fold buynow" id="fBuyBox"><summary><h3><span class="ico i-buy"></span>Buy Now<small id="fBuyN"></small></h3></summary><div id="fBuy"></div></details>
+        <details class="pane fold" id="fSec1" open><summary><h3><span class="ico i-list"></span>Section 1 · Main Picks<small id="fUpd"></small></h3></summary><div id="fList" class="plist"></div></details>
+        <details class="pane fold" id="fSec2" open><summary><h3><span class="ico i-parlay"></span>Section 2 · Optimal Parlays<small id="fParN"></small></h3></summary><div id="fParlays" class="plist"></div></details>
+        <details class="pane fold" id="fFeedBox"><summary><h3><span class="ico i-feed"></span>Live Pick Feed<small>buy-zone entries</small></h3></summary><ol id="fFeed" class="feed"></ol></details>
+        <details class="pane fold" id="fBoardBox"><summary><h3><span class="ico i-board"></span>Projection Board</h3></summary><div id="fBoard"></div></details>
+        <details class="pane fold" id="fIntelBox"><summary><h3><span class="ico i-intel"></span>Matchup Intel</h3></summary><div id="fIntel" class="intel"></div></details>
+        <details class="pane fold notes"><summary><h3><span class="ico i-notes"></span>Risk protocol</h3></summary>
           <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN); ESPN team news can only bench a player (never activate one). Players not listed are fully active; a player in tonight's live box score is active. Teammate usage shifts apply only to OUT (1.00) and DOUBTFUL (0.75). Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
           <p><b>Phase 2 — stress tests.</b> Possessions = home pace (home games) × away pace (road games) ÷ league, from each team's recent box scores. Volume scales to tonight's possessions; efficiency to the opponent's points allowed per 100 possessions, defense-vs-position, shot-zone and shot-type defense, and transition defense (each shrunk toward league by sample size); all blended 50/50 with the market-implied team total. Usage (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate; minutes ramps after absences and role changes inferred from logs; news-reported minute limits and starting-role changes applied. Fatigue: back-to-back, 3-in-4, road stretches, time zones, altitude. Gates: net edge ≥ +4.00%, true probability ≥ 30% (or edge ≥ +10 and ROI ≥ +60%), trend sanitization, prices ≤ 10 min old. Player props are overs only.</p>
           <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlays use only Section 1 survivors, mix props with game lines when both exist, and bar negative or redundant correlations (Gaussian copula; Kirkwood product for three legs). Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
@@ -244,6 +255,8 @@ const UI = (() => {
     $('#fFilter').onclick = (e) => { const b = e.target.closest('[data-f]'); if (!b) return; F.filter = b.dataset.f; $$('#fFilter .chip').forEach((x) => x.classList.toggle('on', x === b)); updateFinder(true); };
     $('#fPlay').onchange = (e) => { F.playable = e.target.checked; updateFinder(true); };
     $('#fNoCombo').onchange = (e) => { F.noCombo = e.target.checked; U.store.set('nocombo', F.noCombo); updateFinder(true); };
+    $('#fBest').onchange = (e) => { F.allRungs = !e.target.checked; U.store.set('allrungs', F.allRungs); updateFinder(true); };
+    $('#fMinP').onchange = (e) => { F.minP = +e.target.value; U.store.set('minp2', F.minP); updateFinder(true); };
     for (const id2 of ['fBuyBox', 'fSec1', 'fSec2', 'fFeedBox', 'fBoardBox', 'fIntelBox']) $('#' + id2).addEventListener('toggle', () => updateFinder(true));
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
     // per-card tabs (History / Evidence): one panel at a time, state kept across refreshes, built on demand
@@ -297,6 +310,8 @@ const UI = (() => {
     else if (F.filter === 'seg') ps = ps.filter((p) => p.seg);
     if (F.playable) ps = ps.filter((p) => p.playable);
     if (F.noCombo) ps = ps.filter((p) => !isCombo(p));
+    ps = ps.filter((p) => p.fair >= F.minP - 1e-9);
+    if (!F.allRungs) ps = bestRungs(ps);
     // strict descending order by net mathematical edge (model-only lines by lean)
     return [...ps].sort((a, b) => (b.netEdge ?? b.lean ?? -1) - (a.netEdge ?? a.lean ?? -1));
   }
@@ -391,7 +406,7 @@ const UI = (() => {
       : [[askLabel, p.book ? `${c0(p.price)}<em>${PICKS.fmtAm(p.am)}</em>` : c0(p.price)], ['True Probability', P2(p.fair)], ['Mathematical Edge', U.signed(p.netEdge * 100, 2) + '%', p.netEdge >= 0 ? 'pos' : 'neg'], ['1/4-Kelly % of bankroll', kellyPct(p.kelly)]];
     const showHist = p.kind === 'prop' && p.data.player?.proj;
     return `<article class="pick tier-${(p.tier || 'none').toLowerCase()}${p.survivor || p.modelOnly ? '' : ' dim'}" id="pk-${U.esc(p.id.replace(/[^A-Za-z0-9_-]/g, '_'))}" data-id="${pid}">
-      <div class="pk-h"><span class="badge">${p.tier || 'OVR'}<b>${p.rating}</b></span><span class="pk-t"><b>${U.esc(who)} — ${U.esc(sel)}</b></span><span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
+      <div class="pk-h">${avatarHTML(p, g)}<span class="pk-t"><b>${U.esc(who)}</b><small>${U.esc(sel)}</small></span><span class="side ${p.side === 'YES' ? 'yes' : 'no'}">${p.side}</span></div>
       ${statRow(cells)}
       ${bracket(p.buyMax, p.fairMax, p.price, c0)}
       ${chips.length ? `<div class="pk-m">${chips.join('')}</div>` : ''}
@@ -418,6 +433,72 @@ const UI = (() => {
   function parlaysHTML(res, empty) {
     if (!res.two.length && !res.three.length) return `<p class="muted small">${empty}</p>`;
     return (res.two.length ? `<h4 class="subh">2-leg</h4>` + res.two.map(parlayHTML).join('') : '') + (res.three.length ? `<h4 class="subh">3-leg</h4>` + res.three.map(parlayHTML).join('') : '');
+  }
+
+  // ---------- quarter-by-quarter scoreboard: Q1 Q2 Q3 Q4 [OT] TOTAL 1H 2H ----------
+  function qtabHTML(g) {
+    const live = g.state === 'in', post = g.state === 'post';
+    const nP = Math.max(4, g.home.line.length, g.away.line.length, live ? g.period : 0);
+    const cur = live ? g.period : 0;
+    const started = (i) => post || (live && i < g.period);
+    const sum = (line, a, z) => { let t = 0; for (let i = a; i < z; i++) t += line[i] || 0; return t; };
+    const heads = [];
+    for (let i = 0; i < nP; i++) heads.push(i < 4 ? 'Q' + (i + 1) : (i === 4 ? 'OT' : `${i - 3}OT`));
+    const cells = (side) => {
+      const L = g[side].line;
+      const v = [];
+      for (let i = 0; i < nP; i++) v.push(started(i) ? (L[i] ?? 0) : null);
+      v.push(g.state === 'pre' ? null : g[side].score);
+      v.push(started(0) ? sum(L, 0, 2) : null);
+      v.push(started(2) ? sum(L, 2, 4) : null);
+      return v;
+    };
+    const a = cells('away'), h = cells('home');
+    const cls = ['', ...heads.map((_, i) => (i + 1 === cur ? 'cur' : '')), 'tot', 'half', 'half'];
+    const th = ['', ...heads, 'TOTAL', '1H', '2H'];
+    const row = (side, v, o) => `<tr><th><span class="qsw" style="--c:#${U.pairColors(g.away, g.home)[side === 'away' ? 0 : 1]}"></span>${U.esc(g[side].abbr)}</th>${v.map((x, i) => `<td class="${cls[i + 1]}${x != null && o[i] != null && x > o[i] ? ' lead' : ''}">${x == null ? '–' : x}</td>`).join('')}</tr>`;
+    return `<table class="qt"><thead><tr>${th.map((t, i) => `<th class="${cls[i]}">${t}</th>`).join('')}</tr></thead><tbody>${row('away', a, h)}${row('home', h, a)}</tbody></table>`;
+  }
+
+  // ---------- win-probability timeline (model vs Kalshi) ----------
+  function wpTimelineHTML(g) {
+    const H = g.wpHist || [];
+    if (g.state === 'pre' || H.length < 2) return '';
+    const W = 340, Ht = 86, L = 2, R0 = 2, T = 6, B = 14;
+    const end = Math.max(48, H[H.length - 1].el);
+    const x = (el) => L + (el / end) * (W - L - R0), y = (p) => T + (1 - p) * (Ht - T - B);
+    const [ca, ch] = U.pairColors(g.away, g.home);
+    const pts = H.map((d) => `${x(d.el).toFixed(1)},${y(d.wp).toFixed(1)}`).join(' ');
+    const k = H.filter((d) => d.kp != null).map((d) => `${x(d.el).toFixed(1)},${y(d.kp).toFixed(1)}`).join(' ');
+    const mid = y(0.5), last = H[H.length - 1];
+    let s = `<svg viewBox="0 0 ${W} ${Ht}" class="wpsvg" role="img" aria-label="Win probability timeline"><defs>
+      <clipPath id="wpTop"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath><clipPath id="wpBot"><rect x="0" y="${mid}" width="${W}" height="${Ht}"/></clipPath>
+      <linearGradient id="wpH" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#${ch}" stop-opacity=".75"/><stop offset="1" stop-color="#${ch}" stop-opacity=".1"/></linearGradient>
+      <linearGradient id="wpA" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#${ca}" stop-opacity=".1"/><stop offset="1" stop-color="#${ca}" stop-opacity=".75"/></linearGradient></defs>`;
+    for (let q = 12; q < end; q += q < 48 ? 12 : 5) s += `<line x1="${x(q)}" x2="${x(q)}" y1="${T}" y2="${Ht - B}" class="wpq"/>`;
+    s += `<polygon points="${x(H[0].el)},${mid} ${pts} ${x(last.el)},${mid}" fill="url(#wpH)" clip-path="url(#wpTop)"/><polygon points="${x(H[0].el)},${mid} ${pts} ${x(last.el)},${mid}" fill="url(#wpA)" clip-path="url(#wpBot)"/>`;
+    s += `<line x1="${L}" x2="${W - R0}" y1="${mid}" y2="${mid}" class="wpm"/>`;
+    if (k) s += `<polyline points="${k}" class="wpk"/>`;
+    s += `<polyline points="${pts}" class="wpl"/><circle cx="${x(last.el)}" cy="${y(last.wp)}" r="3.2" class="wpd"/>`;
+    ['Q1', 'Q2', 'Q3', 'Q4'].forEach((q, i) => (s += `<text x="${x(i * 12 + 6)}" y="${Ht - 3}" text-anchor="middle" class="wpx">${q}</text>`));
+    s += `<text x="${W - 4}" y="${T + 9}" text-anchor="end" class="wpx">${U.esc(g.home.abbr)} ${Math.round(last.wp * 100)}%</text><text x="${W - 4}" y="${Ht - B - 3}" text-anchor="end" class="wpx">${U.esc(g.away.abbr)} ${Math.round((1 - last.wp) * 100)}%</text></svg>`;
+    return `<div class="wpt-h"><span>Win probability</span><span class="wleg"><i class="lm"></i>model<i class="lk"></i>Kalshi</span></div>${s}`;
+  }
+
+  // ---------- 2K-style avatar: headshot (props) or team plate (lines), rating chip ----------
+  function avatarHTML(p, g) {
+    const tierC = { HOF: 'hof', GOLD: 'gold', SILVER: 'silver', BRONZE: 'bronze' }[p.tier] || 'none';
+    let inner;
+    if (p.kind === 'prop' && p.data?.player) {
+      const pl = p.data.player, side = pl.side, ini = pl.name.split(' ').map((w) => w[0]).slice(0, 2).join('');
+      const col = U.pairColors(g.away, g.home)[side === 'away' ? 0 : 1];
+      inner = !NET.isDemo() && pl.espnId ? `<img src="https://a.espncdn.com/i/headshots/nba/players/full/${U.esc(pl.espnId)}.png" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('i'),{textContent:'${U.esc(ini)}'}))"><s style="--c:#${col}"></s>` : `<i>${U.esc(ini)}</i><s style="--c:#${col}"></s>`;
+    } else {
+      const side = p.kind === 'total' || p.kind === 'ot' ? 'home' : (p.yes ? p.m.side : (p.m.side === 'home' ? 'away' : 'home')) || 'home';
+      const t = g[side] || g.home;
+      inner = t.logo && !NET.isDemo() ? `<img class="tl" src="${U.esc(t.logo)}" alt="" loading="lazy">` : `<i class="tp" style="--c:#${t.color};--c2:#${t.alt}">${U.esc(t.abbr)}</i>`;
+    }
+    return `<span class="av t-${tierC}">${inner}<b>${p.rating}</b></span>`;
   }
 
   // ---------- Verified roster / injury status (once per game) ----------
@@ -513,6 +594,8 @@ const UI = (() => {
     if (sh.textContent !== String(g.home.score)) { sh.textContent = g.home.score; bump(sh); }
     $('.lcd .clk b', el).textContent = s.main; $('.lcd .clk small', el).textContent = s.sub;
     updateWP($('.fhero', el), g);
+    const qh = qtabHTML(g), qe = $('#fQtab'); if (qe._h !== qh) { qe.innerHTML = qh; qe._h = qh; }
+    const wh = wpTimelineHTML(g), we = $('#fWpt'); if (we._h !== wh) { we.innerHTML = wh; we._h = wh; }
     $('#fProbs').innerHTML = probsHTML(g);
     $('#fLines').innerHTML = linesHTML(g);
     const ev = g.eval;
@@ -539,7 +622,7 @@ const UI = (() => {
         if (ms.length) html += `<details class="rejbox" data-k="unpriced"${openDetails.has('unpriced') ? ' open' : ''}><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>${openDetails.has('unpriced') ? ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') : ''}</details>`;
         set('#fList', html);
       }
-      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p))).map((p) => ({ p, g }));
+      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p)) && p.fair >= F.minP - 1e-9).map((p) => ({ p, g }));
       if ($('#fSec2').open) {
         const pr = PARLAY.build(pool, { pool: 12, max: 5 });
         $('#fParN').textContent = `${pr.two.length + pr.three.length} tickets`;

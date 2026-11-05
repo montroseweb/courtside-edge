@@ -127,6 +127,20 @@ const PICKS = (() => {
     return out.sort((a, b) => b.rating - a.rating).slice(0, 40);
   }
 
+  // ladder family: rungs of the same underlying bet (one player-stat, one total ladder, one team's spread…)
+  function famKey(m, yes) {
+    const seg = m.seg || 'G', other = (s) => (s === 'home' ? 'away' : 'home');
+    switch (m.kind) {
+      case 'prop': return `prop:${m.espnId || m.player}:${m.stat}`;
+      case 'total': return `total:${seg}:${yes ? 'o' : 'u'}`;
+      case 'teamtotal': return `tt:${seg}:${m.side}:${yes ? 'o' : 'u'}`;
+      case 'spread': return `sp:${seg}:${yes ? m.side : other(m.side)}`;
+      case 'margin': return `mg:${m.side}`;
+      case 'ml': return `ml:${seg}`;
+      default: return m.kind + ':' + m.ticker;
+    }
+  }
+
   function evaluate(g) {
     const rec = INTEL.get(g.id);
     const ls = g.ls || MODEL.liveState(g);
@@ -185,10 +199,20 @@ const PICKS = (() => {
       const mmid = MODEL.mid(m);
       if (m.kind === 'prop' && mmid != null && m.yesAsk - m.yesBid <= 0.1) {
         const nEff = data.player.proj.nEff;
-        wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
-        pFair = wModel * pModel + (1 - wModel) * mmid;
         gap = pModel - mmid;
+        wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
+        // the further the model sits from a liquid market, the likelier the model is missing information
+        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.45, 1);
+        pFair = wModel * pModel + (1 - wModel) * mmid;
         if (Math.abs(gap) > 0.25) unc += 0.03;
+      }
+      // live game lines: same market prior (backtest: live lines ran ~4 pts overconfident without it);
+      // a quote that predates the latest score is stale, so it gets little weight (that is the LAG edge)
+      if (m.kind !== 'prop' && !m.book && !ls.pre && mmid != null && m.yesAsk - m.yesBid <= 0.08) {
+        gap = pModel - mmid;
+        wModel = quoteStale ? 0.85 : 0.65;
+        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.5, 1);
+        pFair = wModel * pModel + (1 - wModel) * mmid;
       }
       fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
       data.fp = fp;
@@ -216,8 +240,13 @@ const PICKS = (() => {
         const kellyFull = ev > 0 ? ev / (1 - cost) : 0;
         const scale = Math.round(U.clamp((kellyFull * 0.25) / 0.03 * 10 * (1 - Math.min(0.5, unc * 3)), 0, 10) * 10) / 10;
         // ---- Phase 2 gates ----
+        const spreadQ = m.book ? 0 : (m.yesAsk != null && m.yesBid != null ? m.yesAsk - m.yesBid : 1);
+        const bidSide = m.book ? 1 : yes ? m.yesBid : m.noBid;
+        // expected log-growth of full Kelly (KL divergence): balances edge against hit rate
+        const growth = ev > 0 ? fair * Math.log(fair / cost) + (1 - fair) * Math.log((1 - fair) / Math.max(1e-6, 1 - cost)) : 0;
         let reason = null;
-        if (delayed > 10) reason = `PRICE STALE: Kalshi feed ${Math.round(delayed)} min old (> 10 min)`;
+        if (!m.book && (spreadQ > 0.12 || !(bidSide > 0.005))) reason = `ILLIQUID: ${!(bidSide > 0.005) ? 'no resting bid' : `bid-ask spread ${Math.round(spreadQ * 100)}¢`}`;
+        else if (delayed > 10) reason = `PRICE STALE: Kalshi feed ${Math.round(delayed)} min old (> 10 min)`;
         else if (netEdge < 0.04 || ev <= 0) reason = `EDGE ${U.signed(netEdge * 100, 2)}% < +4.00% minimum`;
         else if (fair < 0.30 && !(netEdge >= 0.10 && roi >= 0.6)) reason = `TRUE PROBABILITY ${(fair * 100).toFixed(2)}% < 30.00% floor`;
         else if (trend && trend.l10 >= 0.7 && trend.regress) reason = `TREND SANITIZED: L10 ${trend.hh.l10.h}/${trend.hh.l10.n} but projection ${trend.muAdj.toFixed(1)} < 95% of L10 avg ${trend.hh.avg10.toFixed(1)}`;
@@ -233,7 +262,7 @@ const PICKS = (() => {
         out.push({
           id: m.ticker + (yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind, seg: m.seg, stat: m.stat, side: yes ? 'YES' : 'NO',
           label: lb.t, sub: lb.s, price, implied, fair, netEdge, edge: netEdge, ev, cost, fee, roi, be: fairMax, fairMax, maxEntry: buyMax, buyMax, kelly: kellyFull * 0.25, scale, unc, safety, rating, tier,
-          survivor: !reason, reason, trend,
+          survivor: !reason, reason, trend, growth, fam: famKey(m, yes),
           playable: !reason && price <= buyMax + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
           live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
@@ -245,8 +274,8 @@ const PICKS = (() => {
     for (const p of out) { const b = best.get(p.ticker); if (!b || p.edge > b.edge) best.set(p.ticker, p); }
     const picks = [...best.values()].sort((a, b) => (b.survivor - a.survivor) || b.netEdge - a.netEdge);
     const survivors = picks.filter((p) => p.survivor);
-    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, roster: rejected.length };
-    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; }
+    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, illiquid: 0, stale: 0, roster: rejected.length };
+    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; else if (/ILLIQUID/.test(p.reason)) audit.illiquid++; else if (/STALE/.test(p.reason)) audit.stale++; }
     const pricedKeys = new Set(picks.filter((p) => p.kind === 'prop').map((p) => `${p.data.player.espnId}:${p.stat}`));
     const models = modelPicks(g, rec, ls, pricedKeys);
     updateFeed(g, picks);
