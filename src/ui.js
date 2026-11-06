@@ -739,7 +739,8 @@ const UI = (() => {
     $('#proxySave').onclick = () => { NET.setProxy($('#proxyIn').value.trim()); $('#settings').hidden = true; APP.restart(); };
     $('#demoBtn').onclick = () => { $('#settings').hidden = true; APP.startDemo(); };
     $('#liveBtn').onclick = () => { $('#settings').hidden = true; APP.startLive(); };
-    $('#clearBtn').onclick = () => { try { Object.keys(localStorage).filter((k) => k.startsWith('ce:')).forEach((k) => localStorage.removeItem(k)); } catch { } $('#settings').hidden = true; APP.restart(); };
+    // Clear cache keeps My Bets and the parlay builder
+    $('#clearBtn').onclick = () => { try { Object.keys(localStorage).filter((k) => k.startsWith('ce:') && !/^ce:(bets|slip)(:demo)?$/.test(k)).forEach((k) => localStorage.removeItem(k)); } catch { } $('#settings').hidden = true; APP.restart(); };
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && finder) { clearHash(); closeFinder(); } });
     NET.onChange(() => { clearTimeout(init._t); init._t = setTimeout(renderFeeds, 200); });
   }
