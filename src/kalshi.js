@@ -350,6 +350,7 @@ const KALSHI = (() => {
     discover, tick,
     setGames(list) { S.games.clear(); for (const g of list) S.games.set(g.kkey, g); },
     marketsFor: (key) => [...(S.byGame.get(key)?.values() || [])],
+    market: (ticker) => S.markets.get(ticker) || null,
     hasGame: (key) => (S.byGame.get(key)?.size || 0) > 0,
     onUpdate: (f) => { listeners.add(f); return () => listeners.delete(f); },
     status: () => ({ snapAt: S.snapAt || 0, snapMode: !!S.snapAt && !(S.reached && Date.now() - S.reached < 120e3), ok: S.ok, err: S.err, updated: S.updated, reached: S.reached, discovered: S.discovered, series: [...S.gameSeries], markets: S.markets.size, events: S.diag.events, matched: S.diag.matched.size, unmatched: [...S.diag.unmatched].slice(0, 6), scanErrors: S.diag.lastScanErrors }),

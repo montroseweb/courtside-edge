@@ -160,7 +160,7 @@ const APP = (() => {
   const soon = () => STATE.list.some((g) => g.state === 'pre' && g.date - Date.now() < 3 * 3600e3);
 
   async function pollScores() {
-    const keys = [...new Set([STATE.todayKey, STATE.dateKey])];
+    const keys = [...new Set([STATE.todayKey, STATE.dateKey, ...MYB.dateKeys()])];
     const res = await Promise.allSettled(keys.map((k) => ESPN.scoreboard(k)));
     let ok = false;
     for (const r of res) if (r.status === 'fulfilled') { mergeEspn(r.value); ok = true; }
@@ -172,9 +172,12 @@ const APP = (() => {
     mergeNba(sb);
   }
 
+  // the open game plus every game with an open bet or a parlay-builder leg gets the fast live feed
   async function pollFocus() {
-    const g = STATE.focus && STATE.games.get(STATE.focus);
-    if (!g) return;
+    const ids = [...new Set([STATE.focus, ...MYB.watch()].filter(Boolean))];
+    await Promise.all(ids.map((id) => { const g = STATE.games.get(id); return g ? pollGame(g).catch(() => { }) : null; }));
+  }
+  async function pollGame(g) {
     const live = g.state === 'in';
     const tasks = [];
     if (live || g.state === 'post') {
@@ -305,8 +308,9 @@ const APP = (() => {
     const now = Date.now();
     for (const g of STATE.list) {
       derive(g);
-      const fast = g.id === STATE.focus || g.state === 'in';
-      if (!evalAt.get(g.id) || now - evalAt.get(g.id) > (fast ? 900 : 4000)) {
+      // the open game re-prices every tick (0.5s), other live games every ~0.9s
+      const every = g.id === STATE.focus && g.state === 'in' ? 0 : g.state === 'in' || g.id === STATE.focus ? 900 : 4000;
+      if (!evalAt.get(g.id) || now - evalAt.get(g.id) >= every) {
         evalAt.set(g.id, now);
         g.eval = PICKS.evaluate(g); // always: Kalshi, sportsbook and model-only picks
       }
@@ -318,6 +322,7 @@ const APP = (() => {
     UI.renderGames();
     UI.renderTicker();
     UI.updateFinder(false);
+    MYB.tick();
     UI.renderFeeds();
   }
 
@@ -376,8 +381,9 @@ const APP = (() => {
     if (running) return; running = true;
     // installable app: cache the shell for instant launch from the home screen
     if ('serviceWorker' in navigator && location.protocol === 'https:' && !inArtifact()) navigator.serviceWorker.register('./sw.js').catch(() => { });
-    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U, DEMO, PARLAY, SCOUT };
+    if (/debug/.test(location.hash)) window.__CE = { STATE, KALSHI, PICKS, MODEL, INTEL, NET, U, DEMO, PARLAY, SCOUT, MYB, UIX: UI };
     UI.init();
+    MYB.init();
     document.fonts?.ready?.then(() => COURT.invalidate());
     window.addEventListener('hashchange', route);
     document.addEventListener('visibilitychange', () => { if (!document.hidden && STATE.loaded) { pollScores(); pollNba().catch(() => { }); } });

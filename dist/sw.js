@@ -1,6 +1,6 @@
 /* Courtside Edge service worker: instant launch from cache, network-first for the page so updates
    land immediately; live data (ESPN / NBA / Kalshi / GitHub feed) always goes to the network. */
-const V = 'ce-5ac6b93be9';
+const V = 'ce-a8ac1f616a';
 const SHELL = ['./index.html', './manifest.json', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 const shellPaths = () => SHELL.map((p) => new URL(p, self.registration.scope).pathname);
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).catch(() => { })); self.skipWaiting(); });

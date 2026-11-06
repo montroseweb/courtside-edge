@@ -18,11 +18,16 @@ const UI = (() => {
   }
   const isCombo = (p) => p.kind === 'prop' && !!MODEL.COMBO[p.stat];
   let lastListRender = 0, lastChartRender = 0, lastTicker = 0, lastTickerHTML = '', lastTouch = 0;
-  const busy = () => Date.now() - lastTouch < 2500;
+  const busy = () => Date.now() - lastTouch < 2500 || MYB.modal();
 
   const clearHash = () => { try { history.replaceState(null, '', location.pathname + location.search); } catch { location.hash = ''; } };
   const dur = (ms) => { const sec = Math.max(1, Math.round(ms / 1000)); return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + String(sec % 60).padStart(2, '0') + 's'; };
   const DEPLOY = 'https://vercel.com/new/import?s=' + encodeURIComponent('https://github.com/montroseweb/courtside-edge');
+  function kalshiStale(g) {
+    const st = KALSHI.status();
+    if (NET.isDemo() || !KALSHI.hasGame(g.kkey) || !st.snapMode || Date.now() - st.snapAt <= 10 * 60e3) return '';
+    return `<p class="kslim">Kalshi feed is ${U.ago(st.snapAt).replace(' ago', '')} old — picks are held until it refreshes (details at the bottom).</p>`;
+  }
   function kalshiNote(g) {
     const st = KALSHI.status(), h = NET.health('kalshi');
     if (NET.isDemo()) return '';
@@ -141,7 +146,8 @@ const UI = (() => {
 
   // ---------- date bar ----------
   function renderDates() {
-    $('#dates').innerHTML = STATE.dates.map((k) => `<button class="chip${k === STATE.dateKey ? ' on' : ''}" data-k="${k}">${U.dayLabel(k, STATE.todayKey)}</button>`).join('');
+    const bv = MYB.view() === 'bets';
+    $('#dates').innerHTML = `<button class="chip mb${bv ? ' on' : ''}" data-k="bets"><i></i>My Bets<b class="cnt"></b></button>` + STATE.dates.map((k) => `<button class="chip${!bv && k === STATE.dateKey ? ' on' : ''}" data-k="${k}">${U.dayLabel(k, STATE.todayKey)}</button>`).join('');
   }
 
   // ---------- feed LEDs ----------
@@ -159,15 +165,64 @@ const UI = (() => {
   // ---------- ticker (top edges across the slate) ----------
   // ---------- Buy Now ----------
   const kalshiBuyable = (p) => !p.modelOnly && !p.book;
-  function buyRow(p, g, rank, feedMap) {
-    const fe = feedMap.get(p.id);
+  const BN = new Map(); // pick id → {first, changed, sig}: when it appeared and when its price or probability last moved
+  function bnTrack(p) {
+    const sig = Math.round(p.price * 1000) + '|' + Math.round(p.fair * 1000), now = Date.now();
+    let t = BN.get(p.id);
+    if (!t) { t = { first: now, changed: now, sig }; BN.set(p.id, t); } else if (t.sig !== sig) { t.sig = sig; t.changed = now; }
+    if (BN.size > 400) for (const [k, v] of BN) if (now - v.changed > 3600e3) BN.delete(k);
+    return t;
+  }
+  const secs = (t) => { const x = Math.max(0, Math.round((Date.now() - t) / 1000)); return x < 60 ? x + 's' : x < 3600 ? Math.floor(x / 60) + 'm' : Math.floor(x / 3600) + 'h'; };
+  // Kalshi contract side in words: a NO on a team's contract names that team
+  const sideTxt = (p, g) => (p.side === 'NO' && (p.m?.side === 'home' || p.m?.side === 'away') ? `NO on ${g[p.m.side].abbr}` : p.side);
+  function buyInner(p, g, rank, fe) {
+    const t = bnTrack(p), first = fe?.firstSeen ?? t.first, fresh = Date.now() - first < 90e3;
     const clock = g.state === 'in' ? `${U.periodShort(g.period)} ${U.fmtClock(g.clockSec)}` : U.localTime(g.date);
-    return `<button class="tk bn tier-${(p.tier || 'none').toLowerCase()}" data-game="${g.id}" data-pick="${U.esc(p.id)}">
-        <span class="bn-rank">${rank}</span>
-        <span class="tk-main"><b>${U.esc(p.label)}</b><small>${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock} · implied ${(p.implied * 100).toFixed(1)}%${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}${p.lag ? ' · LAG' : ''}</small>
-          <span class="bn-buy">BUY ${p.side} ≤ ${Math.floor(p.buyMax * 100)}¢ <em>now ${Math.round(p.price * 100)}¢ · true ${(p.fair * 100).toFixed(1)}%</em></span></span>
-        <span class="tk-side"><b class="pos">${U.signed(p.netEdge * 100, 2)}%</b><small>¼K ${(p.kelly * 100).toFixed(2)}% · ${fe ? U.ago(fe.firstSeen) : 'new'}</small></span>
-      </button>`;
+    const [who, sel] = heading(p, g);
+    return `<span class="bn-rank">${rank}</span><span class="bn-body">
+        <span class="bn-top"><b>${U.esc(who)}</b>${fresh ? '<em class="bn-new">NEW</em>' : ''}</span>
+        <small>${U.esc(sel)} · ${sideTxt(p, g)} · ${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${clock}${p.lag ? ' · <em class="lagx">LAG</em>' : ''}${p.delayed ? ` · price ${Math.max(1, Math.round(p.delayed))}m old` : ''}</small>
+        <span class="bn-vals"><span><label>Kalshi Ask</label><b>${c0(p.price)}</b></span><span><label>True Probability</label><b>${P2(p.fair)}</b></span><span class="e"><label>Edge</label><b>${U.signed(p.netEdge * 100, 2)}%</b></span></span>
+        <span class="bn-age${fresh ? ' new' : ''}">found ${secs(first)} ago · updated ${secs(t.changed)} ago</span>
+      </span>`;
+  }
+  // keyed list: rows persist, re-rank every tick, slide to new positions (FLIP), flash on rank changes
+  function renderBuyNow(g) {
+    const box = $('#fBuy'); if (!box) return;
+    const bl = buyLists([g]);
+    const nEl = $('#fBuyN'), nTxt = bl.buy.length ? `${bl.buy.length} in buy zone` : 'none in buy zone';
+    if (nEl.textContent !== nTxt) nEl.textContent = nTxt;
+    if (!$('#fBuyBox').open) return;
+    if (!bl.buy.length) {
+      const h = buyHTML(bl, 8, KALSHI.hasGame(g.kkey) ? 'Zero contracts inside a buy zone at current prices.' : 'No Kalshi prices for this game yet.');
+      if (box._h !== h || box._rows) { box.innerHTML = h; box._h = h; box._rows = null; }
+      return;
+    }
+    if (!box._rows) { box.innerHTML = ''; box._h = null; box._rows = new Map(); }
+    else if (Date.now() - lastTouch < 700) return; // never re-rank under a finger
+    const feedMap = new Map(PICKS.feed(g.id).map((e) => [e.key, e]));
+    const before = new Map(); for (const [id, el] of box._rows) before.set(id, el.getBoundingClientRect().top);
+    const keep = new Set();
+    bl.buy.slice(0, 8).forEach(({ p, g: gg }, i) => {
+      keep.add(p.id);
+      let el = box._rows.get(p.id);
+      if (!el) { el = document.createElement('button'); el.dataset.pick = p.id; el.dataset.game = gg.id; box._rows.set(p.id, el); el._born = true; }
+      const cls = `tk bn tier-${(p.tier || 'none').toLowerCase()}${el._born ? ' enter' : ''}`;
+      if (el.className !== cls) el.className = cls;
+      el._born = false;
+      const h = buyInner(p, gg, i + 1, feedMap.get(p.id));
+      if (el._h !== h) { el.innerHTML = h; el._h = h; }
+      if (el._rank && el._rank !== i + 1) { el.classList.remove('up', 'down'); void el.offsetWidth; el.classList.add(i + 1 < el._rank ? 'up' : 'down'); }
+      el._rank = i + 1;
+      if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    });
+    for (const [id, el] of box._rows) if (!keep.has(id)) { el.remove(); box._rows.delete(id); }
+    for (const [id, el] of box._rows) {
+      const f = before.get(id); if (f == null) continue;
+      const d = f - el.getBoundingClientRect().top;
+      if (Math.abs(d) > 1) { el.style.transition = 'none'; el.style.transform = `translateY(${d}px)`; requestAnimationFrame(() => { el.style.transition = 'transform .45s cubic-bezier(.2,.8,.2,1)'; el.style.transform = ''; }); }
+    }
   }
   function watchRow(p, g) {
     return `<button class="tk wl" data-game="${g.id}" data-pick="${U.esc(p.id)}">
@@ -193,8 +248,6 @@ const UI = (() => {
     return { buy, watch, model };
   }
   function buyHTML(lists, max, empty) {
-    const feedMap = new Map(PICKS.allFeed().map((e) => [e.key, e]));
-    if (lists.buy.length) return lists.buy.slice(0, max).map(({ p, g }, i) => buyRow(p, g, i + 1, feedMap)).join('');
     let h = `<p class="muted small bn-empty">${empty}</p>`;
     if (lists.watch.length) h += `<h4 class="subh">Survived stress tests — above buy zone, wait for the price</h4>` + lists.watch.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
     else if (lists.model.length) h += `<h4 class="subh">Model overs — check the price on Kalshi</h4>` + lists.model.slice(0, 5).map(({ p, g }) => watchRow(p, g)).join('');
@@ -211,7 +264,7 @@ const UI = (() => {
     const el = $('#finder');
     el.innerHTML = `<div class="fwin window" role="dialog" aria-label="Pick Finder">
       <div class="titlebar big"><span class="ticon"></span><span class="tb-t">Pick Finder — ${U.esc(g.away.abbr)} @ ${U.esc(g.home.abbr)}</span>
-        <span class="wbtns"><button class="wb mn" aria-hidden="true" tabindex="-1"></button><button class="wb mx" aria-hidden="true" tabindex="-1"></button><button class="wb cl" id="fClose" aria-label="Close Pick Finder">✕</button></span></div>
+        <span class="wbtns"><button class="wb cl" id="fClose" aria-label="Close Pick Finder">✕</button></span></div>
       <div class="fbody">
         <section class="fhero">
           <div class="courtbox big"><canvas class="court"></canvas></div>
@@ -244,7 +297,8 @@ const UI = (() => {
         <details class="pane fold notes"><summary><h3><span class="ico i-notes"></span>Risk protocol</h3></summary>
           <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN); ESPN team news can only bench a player (never activate one). Players not listed are fully active; a player in tonight's live box score is active. Teammate usage shifts apply only to OUT (1.00) and DOUBTFUL (0.75). Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
           <p><b>Phase 2 — stress tests.</b> Possessions = home pace (home games) × away pace (road games) ÷ league, from each team's recent box scores. Volume scales to tonight's possessions; efficiency to the opponent's points allowed per 100 possessions, defense-vs-position, shot-zone and shot-type defense, and transition defense (each shrunk toward league by sample size); all blended 50/50 with the market-implied team total. Usage (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate; minutes ramps after absences and role changes inferred from logs; news-reported minute limits and starting-role changes applied. Fatigue: back-to-back, 3-in-4, road stretches, time zones, altitude. Gates: net edge ≥ +4.00%, true probability ≥ 30% (or edge ≥ +10 and ROI ≥ +60%), trend sanitization, prices ≤ 10 min old. Player props are overs only.</p>
-          <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlays use only Section 1 survivors, mix props with game lines when both exist, and bar negative or redundant correlations (Gaussian copula; Kirkwood product for three legs). Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
+          <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlay legs are Section 1 survivors at least as likely as your Min hit setting; a ticket must clear +4.00 pts compound edge, hit at least 1.18× as often as its price implies, stay +EV with correlation removed, and hit at least 25% (two legs) or 14% (three legs). Tickets mix props with game lines when both exist, bar negative or redundant correlations (Gaussian copula with Monte Carlo pricing), rank by compound edge, and every bet family (all rungs of one ladder) appears on one ticket only. The combo price shown is the product of the live leg asks; Kalshi's own combo quote can differ. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
+        <div id="fKnote" class="kfoot"></div>
       </div></div>`;
     el.hidden = false;
     document.body.classList.add('finder-open');
@@ -260,8 +314,24 @@ const UI = (() => {
     for (const id2 of ['fBuyBox', 'fSec1', 'fSec2', 'fFeedBox', 'fBoardBox', 'fIntelBox']) $('#' + id2).addEventListener('toggle', () => updateFinder(true));
     $('#fBuy').onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } };
     // per-card tabs (History / Evidence): one panel at a time, state kept across refreshes, built on demand
-    const findPick = (pid) => { const g = STATE.games.get(finder?.id); return g && (g.eval?.picks || []).concat(g.eval?.models || []).find((x) => x.id === pid); };
+    const findPick = (pid) => { const g = STATE.games.get(finder?.id); return g && (g.eval?.picks || []).concat(g.eval?.models || [], g.eval?.all || []).find((x) => x.id === pid); };
+    const onAdd = (e) => {
+      const b = e.target.closest('.addb'); if (!b) return false;
+      lastTouch = Date.now();
+      const g = STATE.games.get(finder?.id); if (!g) return true;
+      b.classList.add('on'); b.classList.remove('bounce'); void b.offsetWidth; b.classList.add('bounce');
+      if (b.dataset.add) {
+        const p = findPick(b.dataset.add); if (!p) return true;
+        const [who, sel] = heading(p, g);
+        setTimeout(() => MYB.openAdd({ mode: 'pick', legs: [MYB.legFrom(p, g)], ask: p.price ?? null, title: who, sub: `${sel} · ${sideTxt(p, g)} · ${g.away.abbr}@${g.home.abbr}`, btn: b }), 260);
+      } else if (b.dataset.addpx) {
+        const c = PX.get(b.dataset.addpx); if (!c) return true;
+        setTimeout(() => MYB.openAdd({ mode: 'parlay', pxId: b.dataset.addpx, legs: c.legs.map((l) => MYB.legFrom(l.p, l.g)), ask: c.mkt, title: `${c.legs.length}-leg optimal parlay`, sub: c.legs.map((l) => heading(l.p, l.g)[0]).join(' · '), btn: b }), 260);
+      }
+      return true;
+    };
     const onTab = (e) => {
+      if (onAdd(e)) return;
       const t = e.target.closest('.tab'); if (!t) return;
       lastTouch = Date.now();
       const card = t.closest('.pick'), k = t.dataset.k, pid = card.dataset.id, g = STATE.games.get(finder?.id);
@@ -410,23 +480,27 @@ const UI = (() => {
       ${statRow(cells)}
       ${bracket(p.buyMax, p.fairMax, p.price, c0)}
       ${chips.length ? `<div class="pk-m">${chips.join('')}</div>` : ''}
-      <div class="pk-tabs">${showHist ? `<button class="tab${openDetails.has(hk) ? ' on' : ''}" data-k="${U.esc(hk)}">History</button>` : ''}<button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${U.esc(ek)}">Data-Driven Strategic Evidence</button></div>
+      <div class="pk-tabs">${showHist ? `<button class="tab${openDetails.has(hk) ? ' on' : ''}" data-k="${U.esc(hk)}">History</button>` : ''}<button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${U.esc(ek)}">Data-Driven Strategic Evidence</button>${addBtn(MYB.has(p.id), `data-add="${pid}"`)}</div>
       <div class="pk-panel">${showHist && openDetails.has(hk) ? `<div class="histbox">${histHTML(p)}</div>` : ''}${openDetails.has(ek) ? evidenceHTML(p, g) : ''}</div>
     </article>`;
   }
   function evidenceHTML(p, g) { const ev = PICKS.evidence(p, g); return `<ul class="evs">${ev.sections.map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul>`; }
 
+  const addBtn = (on, attr) => `<button class="addb${on ? ' on' : ''}" ${attr} aria-label="Add to My Bets or a parlay"><i class="pl"></i><i class="ck"></i></button>`;
   // ---------- Section 2: parlays ----------
+  const PX = new Map(); // parlay card id → ticket (for the + button)
   function parlayHTML(c) {
     const id = 'px-' + U.hash(c.legs.map((l) => l.p.id).join('|')).toString(36);
+    PX.set(id, c); if (PX.size > 60) PX.delete(PX.keys().next().value);
     const legs = c.legs.map((l, i) => { const [who, sel] = heading(l.p, l.g); return `<li><b>${i + 1}</b><span>${U.esc(who)} — ${U.esc(sel)}</span><em>${c0(l.p.implied)}</em></li>`; }).join('');
     const ek = id + ':ev';
     return `<article class="pick parlay" id="${id}" data-id="${id}">
-      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span><span class="pk-t"><b>${c.legs.length}-Leg Optimal Parlay</b><small>Cumulative Edge Score ${(c.edge * 100).toFixed(2)}</small></span></div>
+      <div class="pk-h"><span class="badge plx">${c.legs.length}-LEG<b>${(c.edge * 100).toFixed(1)}</b></span><span class="pk-t"><b>${c.legs.length}-Leg Optimal Parlay</b><small>Cumulative Edge Score ${(c.edge * 100).toFixed(2)} · hits ${(c.trueP * 100).toFixed(1)}% vs ${(c.mkt * 100).toFixed(1)}¢ price</small></span></div>
       <ol class="plegs">${legs}</ol>
       ${statRow([['Kalshi Ask', c1(c.mkt)], ['True Probability', P2(c.trueP)], ['Mathematical Edge', U.signed(c.edge * 100, 2) + '%', 'pos'], ['1/4-Kelly % of bankroll', kellyPct(c.kelly)]])}
       ${bracket(c.buyMax, c.fairMax, c.mkt, c1)}
-      <div class="pk-tabs"><button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${ek}">Mathematical Synergy &amp; Correlation Analysis</button></div>
+      <div class="pk-m"><span class="chipx new">HITS ${(c.ratio).toFixed(2)}× ITS PRICE</span>${c.lift > 0.005 ? `<span class="chipx corr">CORRELATION +${(c.lift * 100).toFixed(1)}%</span>` : ''}<span>est. combo = leg asks multiplied</span></div>
+      <div class="pk-tabs"><button class="tab${openDetails.has(ek) ? ' on' : ''}" data-k="${ek}">Mathematical Synergy &amp; Correlation Analysis</button>${addBtn(MYB.hasPx(id), `data-addpx="${id}"`)}</div>
       <div class="pk-panel">${openDetails.has(ek) ? `<ul class="evs">${PARLAY.report(c).map((x) => `<li class="ev-${x.k}"><b>${x.title}:</b> ${U.esc(x.t)}</li>`).join('')}</ul>` : ''}</div>
     </article>`;
   }
@@ -583,6 +657,12 @@ const UI = (() => {
       ${S?.predictor ? `<p class="small">ESPN BPI: ${g.home.abbr} ${U.pct(S.predictor.home, 1)} · ${g.away.abbr} ${U.pct(S.predictor.away, 1)}</p>` : ''}`;
   }
 
+  // Section 2 source: every priced side in this game; the optimizer keeps Section 1 survivors and re-applies every gate
+  function parlaysFor(g) {
+    const ev = g.eval; if (!ev) return { two: [], three: [] };
+    const cands = (ev.all || []).filter((p) => !(F.noCombo && isCombo(p))).map((p) => ({ p, g }));
+    return PARLAY.build(cands, { pool: 24, max: 5, minLeg: Math.max(0.45, F.minP), ...(window.__PXOPT || {}) });
+  }
   function updateFinder(force) {
     if (!finder) return;
     const g = STATE.games.get(finder.id); if (!g) return;
@@ -598,6 +678,7 @@ const UI = (() => {
     const wh = wpTimelineHTML(g), we = $('#fWpt'); if (we._h !== wh) { we.innerHTML = wh; we._h = wh; }
     $('#fProbs').innerHTML = probsHTML(g);
     $('#fLines').innerHTML = linesHTML(g);
+    renderBuyNow(g);
     const ev = g.eval;
     const now = Date.now();
     if (force || (now - lastListRender > 2500 && !busy())) {
@@ -608,12 +689,13 @@ const UI = (() => {
       const au = ev?.audit;
       $('#fCount').textContent = ev ? `${surv.length} survived · ${au.priced + au.roster} priced` : '';
       $('#fUpd').textContent = ev ? `${surv.length} survived` : '';
+      { const kh = kalshiNote(g), kEl = $('#fKnote'); if (kEl._h !== kh) { kEl.innerHTML = kh; kEl._h = kh; } }
       const rh = rosterHTML(g); const rEl = $('#fRoster'); if (rEl._h !== rh) { rEl.innerHTML = rh; rEl._h = rh; }
       const set = (sel, html) => { const x = $(sel); if (x._h !== html) { x.innerHTML = html; x._h = html; } };
       if ($('#fSec1').open) {
         const pend = ev?.pending?.length || 0;
         const rec = INTEL.get(g.id);
-        let html = kalshiNote(g);
+        let html = kalshiStale(g);
         if (au) html += `<p class="audit"><b>${surv.length} survived</b> of ${au.priced + au.roster} · rejected: edge &lt; +4% ${au.edge} · true &lt; 30% ${au.floor} · trend ${au.trend} · roster ${au.roster}</p>`;
         if (surv.length) html += surv.slice(0, 40).map((p) => pickHTML(p, g)).join('');
         else html += `<p class="muted small">${!rec || !INTEL.reportLoaded(rec) ? 'Holding all picks until the game-day injury report is loaded (Phase 1).' : g.state === 'post' ? 'This game is final.' : 'Zero assets cleared every stress test at current prices.'}</p>`;
@@ -622,15 +704,11 @@ const UI = (() => {
         if (ms.length) html += `<details class="rejbox" data-k="unpriced"${openDetails.has('unpriced') ? ' open' : ''}><summary>Unpriced model lines — not edge-verifiable (${ms.length})</summary>${openDetails.has('unpriced') ? ms.slice(0, 20).map((p) => pickHTML(p, g)).join('') : ''}</details>`;
         set('#fList', html);
       }
-      const pool = (ev?.survivors || []).filter((p) => !(F.noCombo && isCombo(p)) && p.fair >= F.minP - 1e-9).map((p) => ({ p, g }));
       if ($('#fSec2').open) {
-        const pr = PARLAY.build(pool, { pool: 12, max: 5 });
+        const pr = parlaysFor(g);
         $('#fParN').textContent = `${pr.two.length + pr.three.length} tickets`;
-        set('#fParlays', parlaysHTML(pr, 'No 2- or 3-leg combination from this game clears +4.00% compound edge with non-negative correlation.'));
+        set('#fParlays', parlaysHTML(pr, 'No 2- or 3-leg combination from this game clears +4.00% compound edge, 18% above its price, with non-negative correlation.'));
       }
-      const bl = buyLists([g]);
-      $('#fBuyN').textContent = bl.buy.length ? `${bl.buy.length} in buy zone` : 'none in buy zone';
-      if ($('#fBuyBox').open) set('#fBuy', buyHTML(bl, 8, KALSHI.hasGame(g.kkey) ? 'Zero contracts inside a buy zone at current prices.' : 'No Kalshi prices for this game yet.'));
       if ($('#fFeedBox').open) renderFeed(g);
       if ($('#fBoardBox').open) set('#fBoard', boardHTML(g));
       if ($('#fIntelBox').open) set('#fIntel', intelHTML(g));
@@ -652,7 +730,7 @@ const UI = (() => {
 
   function init() {
     for (const ev of ['pointerdown', 'touchstart', 'wheel']) document.addEventListener(ev, () => { lastTouch = Date.now(); }, { passive: true, capture: true });
-    $('#dates').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) APP.setDate(b.dataset.k); };
+    $('#dates').onclick = (e) => { const b = e.target.closest('[data-k]'); if (!b) return; if (b.dataset.k === 'bets') return MYB.show(true); if (MYB.view() === 'bets') MYB.show(false); APP.setDate(b.dataset.k); };
     $('#games').onclick = (e) => { const c = e.target.closest('.gcard'); if (c) location.hash = 'game-' + c.dataset.id; };
     $('#games').onkeydown = (e) => { if (e.key === 'Enter') { const c = e.target.closest('.gcard'); if (c) location.hash = 'game-' + c.dataset.id; } };
     if ($('#ticker')) $('#ticker').onclick = (e) => { const b = e.target.closest('[data-game]'); if (!b) return; location.hash = 'game-' + b.dataset.game; setTimeout(() => { const t = document.getElementById('pk-' + b.dataset.pick.replace(/[^A-Za-z0-9_-]/g, '_')); if (t) { t.scrollIntoView({ block: 'center' }); t.classList.add('flash'); } }, 600); };
@@ -666,5 +744,5 @@ const UI = (() => {
     NET.onChange(() => { clearTimeout(init._t); init._t = setTimeout(renderFeeds, 200); });
   }
 
-  return { init, renderGames, updateCard, renderDates, renderFeeds, renderTicker, openFinder, closeFinder, updateFinder, scoreFx, banner, finderId: () => finder?.id || null };
+  return { init, renderGames, updateCard, renderDates, renderFeeds, renderTicker, openFinder, closeFinder, updateFinder, scoreFx, banner, finderId: () => finder?.id || null, heading, avatarHTML, statRow, parlaysFor };
 })();

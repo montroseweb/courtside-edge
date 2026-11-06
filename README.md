@@ -31,6 +31,24 @@ Open `https://raw.githack.com/montroseweb/courtside-edge/main/dist/index.html` i
 Share → Add to Home Screen. The app runs full-screen, launches from cache, and picks up new
 versions automatically (network-first service worker).
 
+## My Bets and the parlay builder
+
+- Tap the green **+** on any Main Pick or Optimal Parlay, type the price you paid (cents), then
+  **Add to my bets** (tracked on its own) or **Create parlay** (adds the leg to the builder).
+- **My Bets** (first chip in the date bar) shows Paid price, Live Kalshi ask, Change and Hold
+  confidence for every position, refreshed every second. Parlays show the ticket on top and every
+  leg below; legs turn green the moment they are mathematically won (an over that cleared, a
+  quarter or half that ended, a final).
+- **SELL NOW** appears only when (a) a position is all but dead (≤ 6%) and a buyer still pays more
+  than it is worth, or (b) the bid, after the fee, beats the real chance by ≥ 6¢ — locking a gain,
+  or cutting a collapsing position (≤ 25%) before the price catches up. The card flashes red and
+  the My Bets chip pulses from any screen.
+- The bottom pill shows legs and the real joint probability; the builder shows the combined
+  Kalshi ask (product of live leg asks — Kalshi's combo quote can differ), real probability,
+  mathematical edge, the break-even price, and a strength analysis: conflicts, overlaps,
+  same-player stacking, the leg whose removal or swap helps most, and adds that raise the ticket's
+  long-run growth. Bets are stored in this browser only.
+
 ## Matchup scouting (opened game)
 
 From each team's last 4 completed games (ESPN summaries): possessions by venue, fast-break and

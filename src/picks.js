@@ -418,8 +418,84 @@ const PICKS = (() => {
     };
   }
 
+  // ---- live probability for a HELD position (My Bets / parlay builder): the same model and market prior as
+  // the pick engine, plus settlement the instant an outcome is mathematically decided (overs cleared, a
+  // quarter or half complete, a final). Returns p for the side held, status live|hit|lost|pending, a plain note.
+  function holdProb(L, g) {
+    const ls = g.ls || MODEL.liveState(g), md = L.m, mk = KALSHI.market(L.ticker);
+    const ctx = { ls, sEff: g.sEff ?? g.pre?.spread ?? 2, tEff: g.tEff ?? g.pre?.total ?? 229 };
+    const th = mk?.th || md.th;
+    const clock = ls.pre ? U.localTime(g.date) : ls.post ? 'Final' : /HALFTIME/.test(g.statusName || '') ? 'Half' : `${U.periodShort(ls.period)} ${U.fmtClock(ls.clockSec)}`;
+    let pY = null, dec = null, note = '';
+    const ab = (side) => g[side].abbr;
+    if (md.kind === 'prop') {
+      const rec = INTEL.get(g.id);
+      const pl = rec ? ((md.espnId && rec.players.get(md.espnId)) || [...rec.players.values()].find((x) => U.nameScore(x.name, md.player) >= 0.8)) : null;
+      const lb = !ls.pre ? liveBoxFor(g, rec, pl?.espnId || md.espnId, pl?.name || md.player) : null;
+      const S = MODEL.SHORT[md.stat] || md.stat, k = th?.k;
+      const cur = lb ? (MODEL.COMBO[md.stat] || [md.stat]).reduce((a, s) => a + (lb[s] || 0), 0) : null;
+      const nm = md.player || 'Player';
+      if (lb && k != null && cur >= k) { dec = 1; note = `${nm} has ${cur} ${S} — cleared ${k}+`; }
+      else if (ls.post) { if (lb || STATE.box.get(g.id)) { dec = 0; note = `${nm} finished with ${cur ?? 0} ${S} (needed ${k})`; } else note = 'Waiting for the final box score'; }
+      else if (pl?.proj && k != null) {
+        const fp = lb ? MODEL.propLiveProb(pl.proj, md.stat, th, lb, ls) : ls.pre ? MODEL.propPregameProb(pl.proj, md.stat, th) : null;
+        if (fp) {
+          pY = fp.p * (lb ? 1 : (INTEL.PLAY_P[pl.st?.code] ?? 1));
+          note = lb ? `${nm} ${cur}/${k} ${S} — needs ${k - cur} more in ~${Math.max(0, fp.r).toFixed(0)} min${fp.notes?.length ? ' · ' + fp.notes.join(', ') : ''}` : `${nm} projects ${fp.mu != null ? fp.mu.toFixed(1) : '—'} ${S} (needs ${k})${pl.st?.code && pl.st.code !== 'ACTIVE' ? ' · ' + pl.st.code : ''}`;
+        } else note = 'Waiting for the live box score';
+      } else note = pl ? 'Loading game logs' : 'Loading player data';
+    } else {
+      const m2 = { ...md, th };
+      const fp = MODEL.lineProb(m2, g, ctx);
+      if (fp) {
+        pY = fp.p;
+        if (ls.post || (fp.sd != null && fp.sd < 0.05 && !ls.pre)) dec = fp.p >= 0.5 ? 1 : 0;
+        const ss = md.seg ? MODEL.segState(g, ls, md.seg) : null;
+        // overs that already cleared settle immediately (unders that cleared are already lost)
+        if (dec == null && th && (md.kind === 'total' || md.kind === 'teamtotal') && !ls.pre) {
+          const curT = md.kind === 'total' ? (ss ? ss.segTotal : ls.total) : (ss ? (md.side === 'home' ? ss.hm : ss.am) : g[md.side]?.score ?? 0);
+          if (th.op === '<' ? curT > th.kmax : curT >= th.k) dec = th.op === '<' ? 0 : 1;
+        }
+        if (dec == null && md.kind === 'ot' && ls.period > 4) dec = 1;
+        const segTxt = ss ? `${md.seg}: ${ab('away')} ${ss.am}–${ss.hm} ${ab('home')}${ss.remSeg > 0 && ss.started ? `, ${ss.remSeg.toFixed(1)} min left in it` : ss.started ? ' (final)' : ' (not started)'}` : '';
+        const lead = (side) => { const d = side === 'home' ? ls.margin : -ls.margin; return d > 0 ? `${ab(side)} lead by ${d}` : d < 0 ? `${ab(side)} trail by ${-d}` : 'tied'; };
+        const heldTeam = ['ml', 'spread', 'margin'].includes(md.kind) ? (L.yes ? md.side : md.side === 'home' ? 'away' : 'home') : null;
+        if (ls.pre) note = md.kind === 'total' || md.kind === 'teamtotal' ? `Model projects ${fp.mu != null ? fp.mu.toFixed(1) : '—'} (line ${th?.line ?? '—'})` : `Model: ${U.pct(L.yes ? pY : 1 - pY)} before tip-off`;
+        else if (ss) note = segTxt;
+        else if (heldTeam && heldTeam !== 'tie') note = `${lead(heldTeam)} · ${clock}`;
+        else if (md.kind === 'total') note = `${ls.total} pts so far · on pace for ${fp.mu != null ? fp.mu.toFixed(0) : '—'} (line ${th?.line ?? '—'})`;
+        else if (md.kind === 'teamtotal') note = `${ab(md.side)} ${g[md.side].score} pts · on pace for ${fp.mu != null ? fp.mu.toFixed(0) : '—'} (line ${th?.line ?? '—'})`;
+        else if (md.kind === 'ot') note = ls.period > 4 ? 'Overtime reached' : `${lead('home')} · ${clock}`;
+        // settled: say why in one line
+        if (dec != null) {
+          const won = (dec === 1) === !!L.yes, fin = `${ab('away')} ${g.away.score}–${g.home.score} ${ab('home')}`;
+          if ((md.kind === 'total' || md.kind === 'teamtotal') && !ls.post && !(ss && ss.remSeg <= 0 && ss.started)) {
+            const curT = md.kind === 'total' ? (ss ? ss.segTotal : ls.total) : (ss ? (md.side === 'home' ? ss.hm : ss.am) : g[md.side]?.score ?? 0);
+            note = `${won ? 'Cleared' : 'Lost'} — ${md.kind === 'teamtotal' ? ab(md.side) + ' already has ' : ''}${curT} pts, already past ${th.line}`;
+          } else if (ss) note = `${won ? 'Won' : 'Lost'} — ${segTxt}`;
+          else if (md.kind === 'ot' && ls.period > 4) note = `${won ? 'Won' : 'Lost'} — the game went to overtime`;
+          else note = `${won ? 'Won' : 'Lost'} — Final: ${fin}`;
+        }
+      } else note = 'Model not ready for this market';
+    }
+    // while undecided: use the pick engine's own true probability for this exact side when it priced it this
+    // tick (same lag-aware market prior as the pick cards); otherwise blend with a liquid quote here
+    if (dec == null && pY != null) {
+      const same = (g.eval?.all || []).find((x) => x.id === L.id) || (g.eval?.models || []).find((x) => x.id === L.id);
+      if (same && same.fair != null) pY = L.yes ? same.fair : 1 - same.fair;
+      else {
+        const mid = MODEL.mid(mk);
+        const stale = mk && !mk.snapAt && g.lastScoreAt && mk.quoteAt < g.lastScoreAt;
+        if (mid != null && mk.yesAsk - mk.yesBid <= 0.1) { const w = stale ? 0.85 : 0.65; pY = w * pY + (1 - w) * mid; }
+      }
+    }
+    if (dec != null) pY = dec;
+    const status = dec != null ? ((dec === 1) === !!L.yes ? 'hit' : 'lost') : pY == null ? 'pending' : 'live';
+    return { p: pY == null ? null : L.yes ? pY : 1 - pY, status, note, clock, mk };
+  }
+
   function feed(gameId) { return [...(FEED.get(gameId)?.values() || [])].sort((a, b) => b.firstSeen - a.firstSeen); }
   function allFeed() { const o = []; for (const f of FEED.values()) o.push(...f.values()); return o.sort((a, b) => b.firstSeen - a.firstSeen); }
 
-  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm };
+  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm, holdProb };
 })();
