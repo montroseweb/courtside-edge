@@ -114,11 +114,18 @@ const MYB = (() => {
         <div class="pin"><input id="popPrice" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="done" value="${def}" aria-describedby="popHint"><span>¢</span></div>
         <small class="muted" id="popHint">${o.ask != null ? `Kalshi ask now ${cc(o.ask)} per contract` : 'No live Kalshi quote — type what you paid'}${o.mode === 'complete' ? ' (combined leg asks)' : ''}</small>
         <button class="gbtn green" data-act="add">${o.mode === 'complete' ? 'Add parlay to my bets' : 'Add to my bets'}</button>
-        ${o.mode === 'complete' ? '' : '<button class="gbtn blue" data-act="parlay">Create parlay</button>'}
+        ${o.mode === 'complete' ? '' : parlayBtn(o)}
       </div></div>`;
     el.hidden = false;
     const inp = $('#popPrice');
     setTimeout(() => { try { inp.focus({ preventScroll: true }); inp.select(); } catch { } }, 60);
+  }
+  function parlayBtn(o) {
+    const inSlip = o.legs.every((L) => slip.some((x) => x.id === L.id));
+    if (inSlip) return '<button class="gbtn blue" disabled>Already in your parlay ✓</button>';
+    const n = slip.length;
+    const t = n ? `Add to parlay · ${n} leg${n > 1 ? 's' : ''} so far` : o.legs.length > 1 ? 'Start a parlay with these legs' : 'Start a parlay';
+    return `<button class="gbtn blue" data-act="parlay">${t}</button><small class="muted">${n ? 'No price needed — you enter the whole ticket’s price when you complete it.' : 'Adds this leg to a new parlay; keep tapping + to add more.'}</small>`;
   }
   function closePop(added) {
     const el = $('#betPop'); el.hidden = true; el.innerHTML = '';
@@ -155,7 +162,7 @@ const MYB = (() => {
       if (o.pxId) pxAdded.add(o.pxId);
       saveSlip();
       closePop(true);
-      toast(n ? (n > 1 ? `Added ${n} legs to parlay` : 'Added to parlay') : 'Already in your parlay');
+      toast(n ? `Added to parlay · ${slip.length} leg${slip.length > 1 ? 's' : ''}` : 'Already in your parlay');
       bumpFab();
     }
     renderFab(); renderDatesBadge();
@@ -200,7 +207,136 @@ const MYB = (() => {
     }
     return out.sort((a, b) => (b.p.netEdge + 0.3 * (b.p.fair - 0.5)) - (a.p.netEdge + 0.3 * (a.p.fair - 0.5))).slice(0, 30);
   }
-  let anCache = null, anAt = 0, anSig = '';
+  let anCache = null, anAt = 0, anSig = '', saMore = false;
+  // the leg's line as shown to the bettor (spreads from the backed team's side), or null if it has none
+  function legLine(L) {
+    const th = L.m?.th; if (!th || !PICKS.ADJ.has(L.m.kind) || th.op === '<') return null;
+    const line = L.m.kind === 'prop' ? th.k - 0.5 : th.line;
+    if (L.m.kind !== 'spread') return String(line);
+    return (L.yes ? '−' : '+') + line;
+  }
+  function stepLeg(id, dir) {
+    load();
+    const i = slip.findIndex((L) => L.id === id); if (i < 0) return;
+    const L = slip[i], g = STATE.games.get(L.gameId);
+    if (!g) return toast('That game isn’t loaded right now');
+    const kind = L.m.kind, line = kind === 'prop' ? L.m.th.k - 0.5 : L.m.th.line;
+    const nl = line + (kind === 'spread' && L.yes ? -dir : dir);
+    if (nl < 0.5) return;
+    const v = PICKS.priceSide({ m: { ...L.m, th: PICKS.thAt(kind, nl) }, yes: L.yes, pside: L.pside }, g);
+    const nL = { ...legFrom(v, g), paid: v.price ?? null };
+    if (slip.some((x, j) => j !== i && x.id === nL.id)) return toast('That line is already in your parlay');
+    slip[i] = nL; saveSlip(); anCache = null; slipEval = null;
+    renderSheet(true); renderFab();
+  }
+
+  // ---------- build your own pick: any game, market, period, side and line ----------
+  const CPS = {};
+  const half = (v) => Math.floor(v) + 0.5;
+  const other = (s) => (s === 'home' ? 'away' : 'home');
+  function cpGames() { return STATE.list.filter((g) => g.state !== 'post' && (g.dateKey === STATE.todayKey || g.dateKey === STATE.dateKey)); }
+  function cpState(scope, gid) {
+    const s = CPS[scope] || (CPS[scope] = { open: false });
+    if (gid && s.gid !== gid) Object.assign(s, { gid, kind: 'spread', seg: '', team: 'home', over: true, pid: '', stat: 'pts', line: null });
+    return s;
+  }
+  function cpDefaultLine(s, g) {
+    const ctx = { ls: g.ls || MODEL.liveState(g), sEff: g.sEff ?? g.pre?.spread ?? 2, tEff: g.tEff ?? g.pre?.total ?? 229 }, seg = s.seg || null;
+    let mu = null, m = null;
+    if (s.kind === 'spread') { mu = MODEL.lineProb({ kind: 'spread', seg, side: s.team, th: { op: '>', line: 0.5, k: 1 } }, g, ctx)?.mu; return mu == null ? -1.5 : -(Math.round(mu - 0.5) + 0.5) || 0.5; }
+    if (s.kind === 'total') { mu = MODEL.lineProb({ kind: 'total', seg, th: { op: '>', line: 0.5, k: 1 } }, g, ctx)?.mu; m = { kind: 'total', seg }; }
+    if (s.kind === 'teamtotal') { mu = MODEL.lineProb({ kind: 'teamtotal', seg, side: s.team, th: { op: '>', line: 0.5, k: 1 } }, g, ctx)?.mu; m = { kind: 'teamtotal', seg, side: s.team }; }
+    if (s.kind === 'prop') { const pl = INTEL.get(g.id)?.players.get(s.pid); mu = pl?.proj?.proj[s.stat]?.mu; m = { kind: 'prop', stat: s.stat, espnId: s.pid, player: pl?.name }; }
+    if (mu == null) return s.kind === 'prop' ? 9.5 : 100.5;
+    const lad = m ? PICKS.ladder(m, g) : [];
+    if (lad.length) return lad.sort((a, b) => Math.abs(a - mu) - Math.abs(b - mu))[0];
+    return Math.max(0.5, half(mu));
+  }
+  function cpDesc(s, g) {
+    const seg = s.seg || null, L = s.line;
+    switch (s.kind) {
+      case 'spread': return L < 0 ? { m: { kind: 'spread', seg, side: s.team, th: PICKS.thAt('spread', -L) }, yes: true } : { m: { kind: 'spread', seg, side: other(s.team), th: PICKS.thAt('spread', L) }, yes: false };
+      case 'total': return { m: { kind: 'total', seg, th: PICKS.thAt('total', L) }, yes: s.over };
+      case 'teamtotal': return { m: { kind: 'teamtotal', seg, side: s.team, th: PICKS.thAt('teamtotal', L) }, yes: s.over };
+      case 'ml': return { m: { kind: 'ml', seg, side: s.team }, yes: true };
+      case 'prop': { const pl = INTEL.get(g.id)?.players.get(s.pid); return pl ? { m: { kind: 'prop', stat: s.stat, espnId: s.pid, player: pl.name, th: PICKS.thAt('prop', L) }, yes: true, pside: pl.side } : null; }
+    }
+    return null;
+  }
+  const lineTxt = (s) => (s.kind === 'spread' ? (s.line > 0 ? '+' : '−') + Math.abs(s.line) : String(s.line));
+  function cpPick(s, g) { const d = cpDesc(s, g); return d ? PICKS.priceSide(d, g) : null; }
+  function cpPreview(s, g) {
+    const p = g && (s.line != null || s.kind === 'ml') ? cpPick(s, g) : null;
+    if (!p) return `<p class="muted small">${s.kind === 'prop' ? 'Pick a player.' : 'Loading this game’s model…'}</p>`;
+    const [who, sel] = UI.heading(p, g);
+    const vals = UI.statRow([['Kalshi Ask', p.price != null ? cc(p.price) : 'no market'], ['True Probability', P2(p.fair)], ['Edge', p.netEdge == null ? '—' : U.signed(p.netEdge * 100, 2) + '%', p.netEdge == null ? '' : p.netEdge >= 0 ? 'pos' : 'neg']]).replace('pk-row', 'pk-row r3');
+    return `<div class="cp-sel"><b>${U.esc(who)}</b> — ${U.esc(sel)} · ${UI.sideTxt(p, g)}</div>${vals}<small class="muted">${p.custom ? 'No Kalshi market at this line — model probability only; type your price when you add it.' : p.netEdge >= 0.04 ? 'Kalshi lists this line and the price clears the +4% edge bar.' : 'Kalshi lists this line.'}${p.note ? ' ' + U.esc(p.note) + '.' : ''}</small>`;
+  }
+  function customHTML(scope, s, g) {
+    const games = cpGames();
+    const chip = (attr, v, label, on) => `<button class="chip${on ? ' on' : ''}" ${attr}="${v}">${label}</button>`;
+    const rec = g && INTEL.get(g.id);
+    const players = rec ? [...rec.players.values()].filter((x) => x.proj).sort((a, b) => b.proj.minProj - a.proj.minProj) : [];
+    if (s.kind === 'prop' && !s.pid && players[0]) s.pid = players[0].espnId;
+    if (s.line == null && g && s.kind !== 'ml') s.line = cpDefaultLine(s, g);
+    const lad = g && s.kind !== 'ml' && s.kind !== 'spread' ? PICKS.ladder(cpDesc(s, g)?.m || {}, g) : [];
+    return `${scope === 'slip' ? `<label class="cp-l">Game <select data-cpf="gid">${games.map((x) => `<option value="${x.id}"${x.id === s.gid ? ' selected' : ''}>${U.esc(x.away.abbr)} @ ${U.esc(x.home.abbr)}${x.state === 'in' ? ' · LIVE' : ''}</option>`).join('')}</select></label>` : ''}
+      <div class="cp-chips">${[['spread', 'Spread'], ['total', 'Total'], ['teamtotal', 'Team total'], ['ml', 'Moneyline'], ['prop', 'Player prop']].map(([k, l]) => chip('data-cpk', k, l, s.kind === k)).join('')}</div>
+      ${s.kind !== 'prop' ? `<div class="cp-chips sm">${[['', 'Game'], ['1H', '1H'], ['2H', '2H'], ['Q1', 'Q1'], ['Q2', 'Q2'], ['Q3', 'Q3'], ['Q4', 'Q4']].map(([k, l]) => chip('data-cps', k, l, (s.seg || '') === k)).join('')}</div>` : ''}
+      ${g && ['spread', 'teamtotal', 'ml'].includes(s.kind) ? `<div class="cp-chips">${chip('data-cpt', 'away', U.esc(g.away.abbr), s.team === 'away')}${chip('data-cpt', 'home', U.esc(g.home.abbr), s.team === 'home')}</div>` : ''}
+      ${['total', 'teamtotal'].includes(s.kind) ? `<div class="cp-chips">${chip('data-cpo', '1', 'Over', s.over)}${chip('data-cpo', '0', 'Under', !s.over)}</div>` : ''}
+      ${s.kind === 'prop' ? `<label class="cp-l">Player <select data-cpf="pid">${players.map((x) => `<option value="${x.espnId}"${x.espnId === s.pid ? ' selected' : ''}>${U.esc(x.name)} (${U.esc(g[x.side].abbr)})</option>`).join('') || '<option>Loading players…</option>'}</select></label><div class="cp-chips">${[['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['fg3m', '3PM'], ['pra', 'PRA']].map(([k, l]) => chip('data-cpst', k, l, s.stat === k)).join('')}</div>` : ''}
+      ${s.kind !== 'ml' ? `<div class="cp-line"><button class="lsb" data-cpl="-1" aria-label="Lower the line">−</button><input data-cpf="line" type="text" inputmode="decimal" value="${s.line != null ? lineTxt(s) : ''}" aria-label="Line"><button class="lsb" data-cpl="1" aria-label="Raise the line">+</button>${s.kind === 'prop' ? '<em>over</em>' : ''}</div>${lad.length ? `<div class="cp-chips sm"><span class="muted small">Kalshi lines</span>${lad.slice(0, 8).map((L) => chip('data-cpset', L, String(L), Math.abs(L - s.line) < 1e-6)).join('')}</div>` : ''}` : ''}
+      <div class="cp-prev">${cpPreview(s, g)}</div>
+      <div class="cp-act"><button class="gbtn green" data-cpa="parlay">Add to parlay</button><button class="gbtn blue" data-cpa="bet">Add to my bets</button></div>`;
+  }
+  function renderCustom(box, scope, gid, force) {
+    if (!box || box.closest('[hidden]')) return;
+    const s = cpState(scope, gid || CPS[scope]?.gid || cpGames()[0]?.id);
+    if (scope === 'slip' && !s.open) { const h = '<button class="bx cp-open" data-cpopen>＋ Add your own pick (any game, market or line)</button>'; if (box._h !== h) { box.innerHTML = h; box._h = h; } return; }
+    const g = STATE.games.get(s.gid);
+    const focused = box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON';
+    if (!force && (focused || touching())) { const pv = box.querySelector('.cp-prev'); if (pv) { const h = cpPreview(s, g); if (pv._h !== h) { pv.innerHTML = h; pv._h = h; } } return; }
+    const h = `<div class="cpk" data-scope="${scope}">${scope === 'slip' ? '<div class="cp-head"><b>Your own pick</b><button class="bx" data-cpclose>Hide</button></div>' : ''}${customHTML(scope, s, g)}</div>`;
+    if (box._h !== h) { box.innerHTML = h; box._h = h; }
+  }
+  function onCustom(e) {
+    const root = e.target.closest('.cpk, [data-cpopen]'); if (!root) return;
+    const wrap = root.closest('#slipCustom, #fCustom'), scope = wrap?.id === 'slipCustom' ? 'slip' : 'finder';
+    if (e.target.closest('[data-cpopen]')) { cpState('slip').open = true; renderCustom(wrap, 'slip', null, true); return; }
+    if (e.target.closest('[data-cpclose]')) { cpState('slip').open = false; wrap._h = null; renderCustom(wrap, 'slip', null, true); return; }
+    const s = CPS[scope]; if (!s) return;
+    const g = STATE.games.get(s.gid);
+    const t = e.target.closest('[data-cpk],[data-cps],[data-cpt],[data-cpo],[data-cpst],[data-cpl],[data-cpset],[data-cpa]');
+    if (e.type === 'change') {
+      const f = e.target.dataset.cpf; if (!f) return;
+      if (f === 'gid') { cpState(scope, e.target.value); }
+      else if (f === 'pid') { s.pid = e.target.value; s.line = null; }
+      else if (f === 'line') { let v = parseFloat(String(e.target.value).replace('−', '-')); if (isFinite(v)) { if (s.kind === 'prop') v = Math.max(0.5, Math.ceil(v) - 0.5); else if (s.kind !== 'spread') v = Math.max(0.5, v); s.line = v || 0.5; } }
+      e.target.blur(); wrap._h = null; renderCustom(wrap, scope, null, true); return;
+    }
+    if (!t) return;
+    touchAt = 0;
+    if (t.dataset.cpk) { s.kind = t.dataset.cpk; s.line = null; }
+    else if (t.dataset.cps != null) { s.seg = t.dataset.cps; s.line = null; }
+    else if (t.dataset.cpt) { s.team = t.dataset.cpt; if (s.kind !== 'spread') s.line = null; else s.line = -s.line; }
+    else if (t.dataset.cpo) s.over = t.dataset.cpo === '1';
+    else if (t.dataset.cpst) { s.stat = t.dataset.cpst; s.line = null; }
+    else if (t.dataset.cpset) s.line = +t.dataset.cpset;
+    else if (t.dataset.cpl) { let v = (s.line ?? 0) + +t.dataset.cpl; if (s.kind === 'spread') { if (Math.abs(v) < 0.5) v = s.line > 0 ? -0.5 : 0.5; } else v = Math.max(0.5, v); s.line = v; }
+    else if (t.dataset.cpa) {
+      const p = g && cpPick(s, g); if (!p || p.fair == null) return toast('This pick can’t be priced yet');
+      const L = legFrom(p, g);
+      if (t.dataset.cpa === 'parlay') {
+        load();
+        if (slip.some((x) => x.id === L.id)) return toast('Already in your parlay');
+        slip.push({ ...L, paid: p.price ?? null }); saveSlip(); anCache = null; slipEval = null;
+        toast(`Added to parlay · ${slip.length} leg${slip.length > 1 ? 's' : ''}`); bumpFab(); renderFab(); if (sheetOpen) renderSheet(true);
+      } else { const [who, sel] = UI.heading(p, g); openAdd({ mode: 'pick', legs: [L], ask: p.price ?? null, title: who, sub: `${sel} · ${UI.sideTxt(p, g)} · ${g.away.abbr}@${g.home.abbr}` }); }
+      return;
+    }
+    wrap._h = null; renderCustom(wrap, scope, null, true);
+  }
   function analyze(force) {
     if (!slip.length) return (anCache = { t: null, B: [], adds: [] });
     const t = slipNow(true);
@@ -285,26 +421,30 @@ const MYB = (() => {
     const A = analyze(force), t = slipNow(force), ev = t.ev;
     const legs = slip.map((L, i) => {
       const e = ev[i] || {};
-      return `<li class="sl ${e.status || ''}"><b class="sl-n">${e.status === 'hit' ? '✓' : i + 1}</b><span class="sl-t"><b>${U.esc(L.who)}</b><small>${U.esc(L.sel)} · ${U.esc(L.away)}@${U.esc(L.home)}${e.clock ? ' · ' + U.esc(e.clock) : ''}</small></span><span class="sl-v"><em>${cc(e.ask)}</em><small>${e.status === 'hit' ? 'HIT' : e.status === 'lost' ? 'LOST' : pc(e.p)}</small></span><button class="sl-x" data-rmleg="${U.esc(L.id)}" aria-label="Remove ${U.esc(L.who)}">✕</button></li>`;
+      const ln = legLine(L);
+      const step = ln != null && e.status !== 'hit' && e.status !== 'lost' ? `<span class="sl-line"><button class="lsb s" data-sls="-1" data-id="${U.esc(L.id)}" aria-label="Lower the line">−</button><b>${ln}</b><button class="lsb s" data-sls="1" data-id="${U.esc(L.id)}" aria-label="Raise the line">+</button>${L.ticker.startsWith('CUSTOM') ? '<em>no Kalshi market</em>' : ''}</span>` : '';
+      return `<li class="sl ${e.status || ''}"><b class="sl-n">${e.status === 'hit' ? '✓' : i + 1}</b><span class="sl-t"><b>${U.esc(L.who)}</b><small>${U.esc(L.sel)} · ${U.esc(L.away)}@${U.esc(L.home)}${e.clock ? ' · ' + U.esc(e.clock) : ''}</small>${step}</span><span class="sl-v"><em>${cc(e.ask)}</em><small>${e.status === 'hit' ? 'HIT' : e.status === 'lost' ? 'LOST' : pc(e.p)}</small></span><button class="sl-x" data-rmleg="${U.esc(L.id)}" aria-label="Remove ${U.esc(L.who)}">✕</button></li>`;
     }).join('');
     const ask = t.ask, p = t.p, edge = ask != null && p != null ? p - ask : null;
     const vals = UI.statRow([['Kalshi ask', cc(ask)], ['Real probability', P2(p)], ['Mathematical edge', edge == null ? '—' : U.signed(edge * 100, 2) + '%', edge == null ? '' : edge >= 0 ? 'pos' : 'neg']]).replace('pk-row', 'pk-row r3');
     const be = p != null ? U.breakEven(p) : null;
-    const sa = A.B.map((x) => `<li class="sa-${x.c}"><i></i><span>${U.esc(x.t)}</span></li>`).join('');
+    const shown = saMore ? A.B : A.B.slice(0, 4);
+    const sa = shown.map((x) => `<li class="sa-${x.c}"><i></i><span>${U.esc(x.t)}</span></li>`).join('') + (A.B.length > 4 ? `<li class="sa-toggle"><button class="bx" data-samore>${saMore ? 'Show less' : `Show all ${A.B.length} notes`}</button></li>` : '');
     const adds = A.adds.map(({ p: q, g, m }) => { const [who, sel] = UI.heading(q, g); return `<li><span><b>${U.esc(who)}</b><small>${U.esc(sel)} · ${U.esc(g.away.abbr)}@${U.esc(g.home.abbr)} · ${cc(q.price)} · true ${pc(q.fair)}</small><em>Ticket → ${P2(m.p)} real · ${U.signed(m.edge * 100, 1)}% edge</em></span><button class="addmini" data-addc="${U.esc(q.id)}" data-g="${g.id}" aria-label="Add ${U.esc(who)}">+</button></li>`; }).join('');
-    const h = `<ol class="slegs">${legs}</ol>${vals}
-      ${be != null ? `<p class="be">Profitable at or below <b>${cc(be)}</b> per contract. Kalshi's combo quote can differ from the combined leg asks — check it before you buy.</p>` : ''}
+    const h = `<ol class="slegs">${legs}</ol>
       <h4 class="subh">Strength analysis</h4><ul class="sa">${sa}</ul>
-      ${adds ? `<h4 class="subh">Best adds</h4><ul class="adds">${adds}</ul>` : ''}
-      <button class="gbtn green" id="slipDone">Complete parlay</button>`;
+      ${adds ? `<h4 class="subh">Best adds</h4><ul class="adds">${adds}</ul>` : ''}`;
     if (box._h !== h) { box.innerHTML = h; box._h = h; }
+    const foot = `${vals}${be != null ? `<p class="be">Profitable at or below <b>${cc(be)}</b>/contract · Kalshi's combo quote can differ from the leg asks multiplied.</p>` : ''}<button class="gbtn green" id="slipDone">Complete parlay · ${slip.length} leg${slip.length > 1 ? 's' : ''}</button>`;
+    const fe = $('#slipFoot'); if (fe._h !== foot) { fe.innerHTML = foot; fe._h = foot; }
+    renderCustom($('#slipCustom'), 'slip');
     $('#slipTitle').textContent = `Parlay Builder · ${slip.length} leg${slip.length > 1 ? 's' : ''}`;
   }
 
   // ---------- My Bets view ----------
   function show(on) {
     view = on ? 'bets' : 'games';
-    $('#games').hidden = on; $('#betsView').hidden = !on;
+    $('#games').hidden = on; $('#betsView').hidden = !on; $('#bestBox').hidden = on;
     UI.renderDates();
     if (on) { load(); render(true); }
   }
@@ -424,7 +564,7 @@ const MYB = (() => {
     add('<div id="betPop" class="modal" hidden></div>');
     add('<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>');
     add('<button id="slipFab" class="fab" hidden aria-label="Open parlay builder"></button>');
-    add(`<div id="slipWrap" class="modal sheetwrap" hidden><div class="slip window" role="dialog" aria-label="Parlay builder"><div class="titlebar big"><span class="ticon pl"></span><span class="tb-t" id="slipTitle">Parlay Builder</span><span class="wbtns"><button class="wb cl" id="slipClose" aria-label="Close parlay builder">✕</button></span></div><div class="sbody" id="slipBody"></div></div></div>`);
+    add(`<div id="slipWrap" class="modal sheetwrap" hidden><div class="slip window" role="dialog" aria-label="Parlay builder"><div class="titlebar big"><span class="ticon pl"></span><span class="tb-t" id="slipTitle">Parlay Builder</span><span class="wbtns"><button class="wb cl" id="slipClose" aria-label="Close parlay builder">✕</button></span></div><div class="sbody"><div id="slipBody"></div><div id="slipCustom" class="cpwrap"></div></div><div class="sfoot" id="slipFoot"></div></div></div>`);
     $('#betPop').addEventListener('click', (e) => {
       if (e.target.id === 'betPop' || e.target.closest('[data-x]')) return closePop(false);
       const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act);
@@ -434,6 +574,8 @@ const MYB = (() => {
     $('#slipClose').onclick = closeSheet;
     $('#slipWrap').addEventListener('click', (e) => {
       if (e.target.id === 'slipWrap') return closeSheet();
+      const sl = e.target.closest('[data-sls]'); if (sl) { touchAt = 0; return stepLeg(sl.dataset.id, +sl.dataset.sls); }
+      if (e.target.closest('[data-samore]')) { saMore = !saMore; renderSheet(true); return; }
       const x = e.target.closest('[data-rmleg]');
       if (x) { load(); slip = slip.filter((L) => L.id !== x.dataset.rmleg); saveSlip(); anCache = null; slipEval = null; if (!slip.length) { pxAdded.clear(); closeSheet(); toast('Parlay cleared'); } else renderSheet(true); renderFab(); UI.updateFinder(true); return; }
       const a = e.target.closest('[data-addc]');
@@ -450,10 +592,12 @@ const MYB = (() => {
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetOpen && !pop) closeSheet(); });
     document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('#slipWrap, #betsView')) touchAt = Date.now(); }, { capture: true, passive: true });
+    document.addEventListener('click', onCustom);
+    document.addEventListener('change', onCustom);
   }
 
   return {
-    init, tick, show, render, openAdd, legFrom, has, hasPx, watch, dateKeys, evalBet,
+    init, tick, show, render, openAdd, legFrom, has, hasPx, watch, dateKeys, evalBet, renderCustom,
     view: () => view, modal: () => !!pop || sheetOpen,
     _state: () => ({ bets, slip }), _reset: () => { mode = null; },
   };

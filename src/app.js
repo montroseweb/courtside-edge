@@ -284,7 +284,7 @@ const APP = (() => {
   async function background() {
     if (bgBusy) return; bgBusy = true;
     try {
-      const cands = STATE.list.filter((g) => g.state === 'in' || (g.state === 'pre' && g.date - Date.now() < 6 * 3600e3));
+      const cands = STATE.list.filter((g) => g.state === 'in' || (g.state === 'pre' && (g.date - Date.now() < 6 * 3600e3 || g.dateKey === STATE.dateKey)));
       for (const g of cands) {
         if (g.id === STATE.focus) continue;
         const rec = INTEL.get(g.id);

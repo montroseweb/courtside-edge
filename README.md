@@ -95,6 +95,48 @@ shows whichever feed is ahead. Nothing can be faster than the feeds themselves.
 - **Pricing:** Edge = confidence − ask − Kalshi taker fee (0.07·P·(1−P)). *Max entry* keeps a
   safety margin that grows with model uncertainty; *Great entry* adds 6¢. Kelly shown at ¼.
 
+## Model validation on real NBA data
+
+Player projections were tested walk-forward on 50,958 real ESPN player-games (503 players,
+2024-25 → this season): every game is projected from the games before it only, then scored on
+P(stat ≥ line) at the usual ladder lines. Settings were tuned on 2025-26 and checked on 2026-27
+games the tuning never saw.
+
+| | Old model | Current model |
+|---|---|---|
+| 2025-26 (Jan → Apr), calibration error | 2.20 pts | 1.83 pts |
+| 2025-26 opening weeks, calibration error | 1.97 pts | 1.36 pts |
+| 2026-27 so far (held out), log loss | 0.4706 | 0.4607 |
+| 2026-27 so far (held out), calibration error | 4.27 pts | 2.34 pts |
+
+What changed and why:
+- **Minutes-aware spread.** The spread was measured on minute-normalised games, so foul trouble,
+  blowouts and early exits were missing; overs called 75% hit 71%. Using the raw spread fixed the
+  tails (85% → 84%, 7% → 8%).
+- **League season drift.** The same 290 players are scoring 7.9% fewer points per minute and
+  playing 5.2% fewer minutes than last season; last-season games are now rescaled by a drift
+  factor pooled over every loaded player.
+- **This season's minutes first.** Roles reset each October; this season's minutes take over after
+  ~2 games.
+- **Short-night scenario.** A blended chance (own history, shrunk to a role prior) that a player
+  logs under 10 minutes — those nights almost never cash an over.
+- Tested and rejected: capping big games (worse — big nights are real signal), shorter or longer
+  recency half-lives, lower weight on last season.
+
+Some early-season over-projection remains (lines called 55% have hit ~44% since Nov 1 on a small
+sample), which is why pregame props for players with fewer than 10 games lean further on the
+Kalshi price, and every pick still needs +4% edge after the blend.
+
+## Lines you choose
+
+Every prop, spread, total and team total card has a line stepper (− / +) and chips for the lines
+Kalshi lists. Moving the line re-prices the pick (Kalshi's real market at that line when it
+exists; otherwise the model, adjusted by the same market blend the nearest listed lines get, so
+probabilities stay ordered) and moves the line in the History charts. Optimal Parlay legs and
+parlay-builder legs have the same steppers; edited parlays stay pinned until you reset them.
+**Build Your Own Pick** (in each game, and inside the parlay builder for any game) prices any
+spread, total, team total, moneyline or player-prop over, for the full game or any half/quarter.
+
 ## Build
 
 ```bash

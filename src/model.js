@@ -231,16 +231,46 @@ const MODEL = (() => {
    * Pregame projection for one player.
    * logs: newest-first gamelog rows (both seasons). ctx: {season, opp, home, teamCode, env, spreadTeam, b2b, outMates:[{name, logs}], status}
    */
+  // projection settings, chosen by a walk-forward test on real ESPN game logs (README → Model validation):
+  // mv = minutes-aware spread, curK = this season's minutes take over fast, shortQ = short-night scenario.
+  // wins (capping big games) and other half-lives tested worse and stay off.
+  const PROJ_OPT = { hl: 10, prevW: 0.55, wins: 0, minMed: false, vf: 1, mv: 1, curK: 2, prevMinF: 1, shortQ: true };
+  // league-wide season drift: how this season's per-minute production and minutes compare with last season for
+  // the same players, pooled over every loaded player (computed by INTEL); last-season rows are rescaled by it
+  function driftOf(players, season) {
+    const acc = { pts: [0, 0], reb: [0, 0], ast: [0, 0], fg3m: [0, 0], stl: [0, 0], blk: [0, 0] }; let cm = 0, pm = 0, mins = 0;
+    for (const logs of players) {
+      const rows = (logs || []).filter((r) => !r.post && r.min >= 4);
+      const c = rows.filter((r) => r.season === season), p = rows.filter((r) => r.season === season - 1);
+      if (c.length < 3 || p.length < 15) continue;
+      const cmin = U.sum(c.map((r) => r.min)), pmin = U.sum(p.map((r) => r.min));
+      for (const k in acc) { acc[k][0] += U.sum(c.map((r) => r[k] || 0)); acc[k][1] += U.sum(p.map((r) => r[k] || 0)) / pmin * cmin; }
+      cm += cmin / c.length; pm += pmin / p.length; mins += cmin;
+    }
+    if (mins < 2000) return null;
+    const sh = mins / (mins + 6000); // shrink toward no drift until the pooled sample is large
+    const d = { n: mins };
+    for (const k in acc) d[k] = acc[k][1] > 0 ? 1 + sh * U.clamp(acc[k][0] / acc[k][1] - 1, -0.15, 0.15) : 1;
+    d.min = pm > 0 ? 1 + sh * U.clamp(cm / pm - 1, -0.12, 0.12) : 1;
+    return d;
+  }
   function projectPlayer(logs, ctx) {
+    const D = ctx.drift;
+    if (D) logs = (logs || []).map((r) => (r.season === ctx.season ? r : { ...r, min: r.min * D.min, pts: r.pts * D.pts, reb: r.reb * D.reb, ast: r.ast * D.ast, fg3m: (r.fg3m || 0) * D.fg3m, stl: r.stl * D.stl, blk: r.blk * D.blk }));
     const games = (logs || []).filter((r) => r.min >= 4);
     if (games.length < 3) return null;
     const cur = games.filter((r) => r.season === ctx.season);
-    const w = games.map((r, i) => Math.pow(0.5, i / 10) * (r.season === ctx.season ? 1 : 0.55) * (r.post ? 0.85 : 1));
+    const O = { ...PROJ_OPT, ...(ctx._opt || {}) };
+    const w = games.map((r, i) => Math.pow(0.5, i / O.hl) * (r.season === ctx.season ? 1 : O.prevW) * (r.post ? 0.85 : 1));
     const nEff = U.sum(w) ** 2 / U.sum(w.map((x) => x * x));
     const notes = [];
     // minutes
     const last5 = games.slice(0, 5);
-    let minProj = 0.6 * U.wmean(games.map((r) => r.min), w) + 0.4 * U.mean(last5.map((r) => r.min));
+    const l5m = last5.map((r) => r.min).sort((a, b) => a - b);
+    let minProj = 0.6 * U.wmean(games.map((r) => r.min * (r.season === ctx.season ? 1 : O.prevMinF)), w) + 0.4 * (O.minMed ? l5m[Math.floor(l5m.length / 2)] : U.mean(l5m));
+    // early season: this season's minutes take over as soon as they exist (roles reset every October)
+    const curMin = cur.filter((r) => r.min >= 4);
+    if (O.curK && curMin.length) { const wc = curMin.length / (curMin.length + O.curK); minProj = wc * U.wmean(curMin.map((r) => r.min), curMin.map((_, i) => Math.pow(0.5, i / O.hl))) + (1 - wc) * minProj; }
     const minBase = minProj;
     // minutes intelligence: ramp after an absence, sustained role change, news-reported limits / role
     const curG = games.filter((r) => r.season === ctx.season);
@@ -334,7 +364,15 @@ const MODEL = (() => {
       let mu;
       if (COMBO[s]) mu = COMBO[s].reduce((a, k) => a + proj[k].mu, 0);
       else {
-        const rate = U.sum(games.map((r, i) => vals[i] * w[i])) / U.sum(games.map((r, i) => r.min * w[i]));
+        // per-minute rate; with O.wins set, each game's rate is capped at a robust center ± wins·MAD so one outlier
+        // night can't drag the projection (the outlier still counts fully in the variance)
+        let v2 = vals;
+        if (O.wins) {
+          const rates = games.map((r, i) => vals[i] / Math.max(r.min, 1)), sorted = rates.slice().sort((a, b) => a - b);
+          const med = sorted[Math.floor(sorted.length / 2)], mad = U.mean(rates.map((x) => Math.abs(x - med))) || med * 0.3;
+          v2 = games.map((r, i) => Math.min(vals[i], (med + O.wins * mad) * Math.max(r.min, 1)));
+        }
+        const rate = U.sum(games.map((r, i) => v2[i] * w[i])) / U.sum(games.map((r, i) => r.min * w[i]));
         mu = rate * minProj;
         mu *= envFor(s);
         mu *= Math.pow(fat.effF ?? 1, EFF_EXP[s] ?? 0);
@@ -362,14 +400,28 @@ const MODEL = (() => {
       }
       if (COMBO[s]) { // combos: apply average of component context already embedded via components
       }
-      const sv = U.wvar(scaled, w);
+      // mv: blend in the raw (not minute-normalized) spread so minutes swings — foul trouble, blowouts, early exits —
+      // count as real outcome risk
+      // with the short-night scenario on, short games (< 10 min) are modelled separately, so they leave the spread
+      const keep = O.shortQ ? games.map((r) => r.min >= 10) : null;
+      const sub = (a) => (keep ? a.filter((_, i) => keep[i]) : a), ws = sub(w);
+      const sv = O.mv ? (1 - O.mv) * U.wvar(sub(scaled), ws) + O.mv * U.wvar(sub(vals), ws) : U.wvar(sub(scaled), ws);
       const pv = priorVar(s, mu);
       let variance = (nEff * (isFinite(sv) ? sv : pv) + 8 * pv) / (nEff + 8);
-      variance *= 1 + 1 / Math.max(2, nEff);
+      variance *= (1 + 1 / Math.max(2, nEff)) * O.vf;
       proj[s] = { mu, variance, h2hF, haF, n: games.length, nEff, vals };
     }
     const env = {}; for (const s of STATS) env[s] = envFor(s);
-    return { proj, minProj, minBase, games, cur, notes, nEff, env, usage: usageInfo, fat, l5min: U.mean(last5.map((r) => r.min)) };
+    // chance this turns into a short night (< 10 min: early exit, foul trouble, benched in a blowout): the player's
+    // own rate over his last 25 appearances, shrunk toward a role prior (starters rarely, deep bench often)
+    let shortQ = 0;
+    if (O.shortQ) {
+      const app = (logs || []).filter((r) => r.min > 0).slice(0, 25);
+      const nShort = app.filter((r) => r.min < 10).length;
+      const prior = minProj >= 30 ? 0.03 : minProj >= 24 ? 0.06 : minProj >= 16 ? 0.12 : 0.25;
+      shortQ = U.clamp((nShort + 8 * prior) / (app.length + 8), 0.01, 0.6);
+    }
+    return { proj, minProj, minBase, games, cur, notes, nEff, env, usage: usageInfo, fat, shortQ, l5min: U.mean(last5.map((r) => r.min)) };
   }
 
   function probAtLeast(stat, k, mu, variance) {
@@ -378,6 +430,14 @@ const MODEL = (() => {
     return U.countAtLeast(k, mu, variance);
   }
 
+  // P(stat ≥ k) for a projection, including the short-night scenario (≈6 minutes played)
+  function propAtLeast(pp, stat, k) {
+    const pr = pp.proj[stat], q = pp.shortQ || 0;
+    const full = probAtLeast(stat, k, pr.mu, pr.variance);
+    if (!q) return full;
+    const f = U.clamp(6 / Math.max(pp.minProj, 6), 0, 1);
+    return (1 - q) * full + q * probAtLeast(stat, k, pr.mu * f, Math.max(pr.variance * f, 0.3));
+  }
   function propPregameProb(pp, stat, th) {
     if (!pp) return null;
     if (stat === 'dd' || stat === 'td') {
@@ -387,8 +447,8 @@ const MODEL = (() => {
     }
     const pr = pp.proj[stat];
     if (!pr || !th) return null;
-    if (th.op === '<') return { p: 1 - probAtLeast(stat, th.kmax + 1, pr.mu, pr.variance), mu: pr.mu, sd: Math.sqrt(pr.variance) };
-    return { p: probAtLeast(stat, th.k, pr.mu, pr.variance), mu: pr.mu, sd: Math.sqrt(pr.variance) };
+    const p = propAtLeast(pp, stat, th.op === '<' ? th.kmax + 1 : th.k);
+    return { p: th.op === '<' ? 1 - p : p, mu: pr.mu, sd: Math.sqrt(pr.variance), shortQ: pp.shortQ || 0 };
   }
 
   /**
@@ -440,5 +500,5 @@ const MODEL = (() => {
     return { l5: hit(v.slice(0, 5)), l10: hit(v.slice(0, 10)), l20: hit(v.slice(0, 20)), season: hit(cur), streak: first ? streak : -streak, last: v.slice(0, 10), avg5: U.mean(v.slice(0, 5)), avg10: U.mean(v.slice(0, 10)) };
   }
 
-  return { teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
+  return { driftOf, propAtLeast, teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
 })();

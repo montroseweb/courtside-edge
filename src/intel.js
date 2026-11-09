@@ -250,8 +250,18 @@ const INTEL = (() => {
     return (t.gp * t.pf + 6 * lg) / (t.gp + 6);
   }
 
+  // league-wide season drift pooled over every player whose logs are loaded (refreshed each minute)
+  let driftC = { at: 0, season: 0, d: null };
+  function leagueDrift(season) {
+    if (driftC.season === season && Date.now() - driftC.at < 60e3) return driftC.d;
+    const all = []; for (const r of C.values()) for (const p of r.players.values()) if (p.logs) all.push(p.logs);
+    driftC = { at: Date.now(), season, d: MODEL.driftOf(all, season) };
+    return driftC.d;
+  }
   function project(g, rec) {
     const season = U.seasonFor(g.dateKey);
+    const drift = leagueDrift(season);
+    rec.drift = drift;
     const pre = g.pre || MODEL.pregame(g, rec.summary, KALSHI.marketsFor(g.kkey));
     const pm = possModel(g);
     rec.poss = pm;
@@ -275,7 +285,7 @@ const INTEL = (() => {
       const st = statusFor(rec, g, side, id, p.name);
       const scoutF = SCOUT.factors(p, team.id, opp.id);
       const nws = newsFlags(rec, g, side, id, p.name);
-      const ctx = { scoutF, news: nws, defenderF: p.ctx?.defenderF ?? 1, defenderZ: p.ctx?.defenderZ, season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
+      const ctx = { drift, scoutF, news: nws, defenderF: p.ctx?.defenderF ?? 1, defenderZ: p.ctx?.defenderZ, season, opp: opp.code, home: side === 'home', teamCode: team.code, impliedPts, teamAvgPts: avg, spreadTeam, paceF, defF, marketF, poss: pm.poss, teamPace: teamPaceV, oppDrtg: oppM.drtg, oppDefRank: oppM.defRank, lgRtg: pm.lgRtg, fat: rec.fat[side], outMates: outs[side].filter((o) => o.espnId !== id), status: st.code };
       p.ctx = ctx;
       p.st = st;
       p.status = st.code === 'ACTIVE' ? '' : st.code;
@@ -325,5 +335,5 @@ const INTEL = (() => {
     };
   }
 
-  return { newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
+  return { leagueDrift, newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();

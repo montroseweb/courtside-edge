@@ -201,6 +201,10 @@ const PICKS = (() => {
         const nEff = data.player.proj.nEff;
         gap = pModel - mmid;
         wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
+        // early season the model's history is least reliable (real-data test: it over-projects until roles settle),
+        // so a pregame prop leans further on the market until the player has 10 games this season
+        const nCur = data.player.proj.cur?.length || 0;
+        if (!quoteStale && !data.live && nCur < 10) wModel *= 0.8 + 0.02 * nCur;
         // the further the model sits from a liquid market, the likelier the model is missing information
         if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.45, 1);
         pFair = wModel * pModel + (1 - wModel) * mmid;
@@ -387,7 +391,8 @@ const PICKS = (() => {
       if (pre.kalshiSpread != null) bits.push(`Kalshi spread ladder ${U.signed(pre.kalshiSpread, 1)}`);
       if (pre.kalshiTotal != null) bits.push(`Kalshi total ladder ${f1(pre.kalshiTotal)}`);
       sec.arb.push(`${priceTxt}. Model ${P2(p.fair)} (${fp.mu != null ? `mean ${U.signed(fp.mu, 1)} ± ${f1(fp.sd)}` : 'segment model'}). Consensus inputs: ${bits.join(', ') || 'Kalshi prices only'}.`);
-      sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      if (p.netEdge != null) sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 (ROI ${U.signed(p.roi * 100, 1)}%).`);
+      else sec.arb.push('No Kalshi market at this line — model probability only.');
       if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after a score ${p.lag.sinceScore}s ago; fair value moved ${U.signed(p.lag.move * 100, 1)} pts.`);
       if (p.delayed) sec.arb.push(`Price from the published Kalshi feed, ${U.ago(m.snapAt)}.`);
       sec.pace.push(`Projected possessions ${f1(pm.poss)} = ${g.home.abbr} ${f1(pm.paceH)} × ${g.away.abbr} ${f1(pm.paceA)} ÷ league ${f1(pm.lgPace)} (${pm.src}). Consensus total ${f1(g.pre?.total)}; model total ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).mu)} ± ${f1(MODEL.totalDist(g.ls, g.tEff ?? g.pre?.total, g).sd)}.`);
@@ -494,8 +499,76 @@ const PICKS = (() => {
     return { p: pY == null ? null : L.yes ? pY : 1 - pY, status, note, clock, mk };
   }
 
+  // ---- re-price any side at any line: Kalshi's own market at that line when it exists (same numbers as the pick
+  // cards), otherwise the model's probability with no tradable price ----
+  const ADJ = new Set(['prop', 'spread', 'total', 'teamtotal']);
+  const sameSubject = (x, m) => (m.kind === 'prop' ? x.stat === m.stat && ((m.espnId && x.espnId === m.espnId) || U.nameScore(x.player || '', m.player || '') >= 0.8) : m.kind === 'total' ? true : x.side === m.side);
+  function findMarket(m, g) {
+    if (!m.th) return KALSHI.marketsFor(g.kkey).find((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.side === m.side) || null;
+    return KALSHI.marketsFor(g.kkey).find((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.th && x.th.op !== '<' && sameSubject(x, m) && (m.kind === 'prop' ? x.th.k === m.th.k : Math.abs(x.th.line - m.th.line) < 1e-6)) || null;
+  }
+  const thAt = (kind, line) => (kind === 'prop' ? { op: '>=', line: Math.ceil(line) - 0.5, k: Math.ceil(line) } : { op: '>', line, k: Math.floor(line) + 1 });
+  // every Kalshi line that exists for this bet (for the line chips)
+  function ladder(m, g) {
+    if (!ADJ.has(m.kind)) return [];
+    return KALSHI.marketsFor(g.kkey).filter((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.th && x.th.op !== '<' && sameSubject(x, m)).map((x) => x.th.line).sort((a, b) => a - b).filter((v, i, a) => a.indexOf(v) === i);
+  }
+  /** d: {m:{kind, seg, side, stat, th, range, espnId, player}, yes} → a pick-shaped object for any line */
+  function priceSide(d, g) {
+    const mk = findMarket(d.m, g);
+    const ticker = mk ? mk.ticker : `CUSTOM-${g.id}-${d.m.kind}-${d.m.seg || 'G'}-${d.m.side || ''}-${d.m.stat || ''}-${d.m.espnId || ''}-${d.m.th ? d.m.th.line : ''}`;
+    const id = ticker + (d.yes ? ':Y' : ':N');
+    const same = (g.eval?.all || []).find((x) => x.id === id);
+    if (same) return same;
+    const m = { ...d.m, th: mk?.th || d.m.th, ticker };
+    const h = holdProb({ id, ticker, yes: !!d.yes, m }, g);
+    const rec = INTEL.get(g.id);
+    const pl = m.kind === 'prop' && rec ? ((m.espnId && rec.players.get(m.espnId)) || [...rec.players.values()].find((x) => U.nameScore(x.name, m.player || '') >= 0.8)) : null;
+    const price = mk ? (d.yes ? mk.yesAsk : mk.noAsk) : null;
+    let fair = h.p;
+    // a line Kalshi doesn't list: carry over the market adjustment the pick engine applied at the nearest listed
+    // line of the same ladder (probit shift), so moving the line keeps the numbers consistent and monotone
+    if (!mk && fair != null && h.status === 'live' && m.th) {
+      const anchors = (g.eval?.all || []).filter((x) => x.m.kind === m.kind && (x.m.seg || null) === (m.seg || null) && x.m.th && x.m.th.op !== '<' && sameSubject(x.m, m) && x.data?.fp?.pModel != null);
+      if (anchors.length) {
+        // P(YES) at each listed line: engine's blended value and the model's own
+        const z = (q) => U.normInv(U.clamp(q, 0.002, 0.998));
+        const pts = new Map();
+        for (const a of anchors) if (!pts.has(a.m.th.line)) pts.set(a.m.th.line, { L: a.m.th.line, b: a.yes ? a.fair : 1 - a.fair, mo: a.data.fp.pModel });
+        const arr = [...pts.values()].sort((x, y) => x.L - y.L), L = m.th.line;
+        const lo = [...arr].reverse().find((x) => x.L < L), hi = arr.find((x) => x.L > L);
+        const sh = (x) => z(x.b) - z(x.mo);
+        const shift = lo && hi ? sh(lo) + (sh(hi) - sh(lo)) * (L - lo.L) / (hi.L - lo.L) : sh(lo || hi);
+        let adjY = U.normCdf(z(d.yes ? fair : 1 - fair) + shift);
+        // YES is "over / wins by more": it can only get less likely as the line rises — stay between the neighbours
+        if (lo) adjY = Math.min(adjY, lo.b);
+        if (hi) adjY = Math.max(adjY, hi.b);
+        fair = d.yes ? adjY : 1 - adjY;
+      }
+    }
+    const lb = labels(m, g, !!d.yes);
+    const o = { id, ticker, gameId: g.id, kind: m.kind, seg: m.seg, stat: m.stat, side: d.yes ? 'YES' : 'NO', yes: !!d.yes, label: lb.t, sub: lb.s, m, custom: !mk, modelOnly: !mk || price == null,
+      fair, price, implied: price, status: h.status, note: h.note, live: !(g.ls || MODEL.liveState(g)).pre, fam: famKey(m, !!d.yes), tier: '', lag: null, delayed: mk?.snapAt ? (Date.now() - mk.snapAt) / 60000 : 0,
+      data: { player: pl || (m.kind === 'prop' ? { name: m.player, espnId: m.espnId, side: d.pside || 'home' } : null), fp: { p: fair } } };
+    if (fair == null) return { ...o, netEdge: null, kelly: 0, buyMax: 0, fairMax: 0, maxEntry: 0, rating: 40 };
+    const unc = 0.04, safety = unc * 0.8 + 0.005;
+    const buyMax = Math.min(Math.max(0, fair - 0.04), U.breakEven(Math.max(0, fair - safety)));
+    if (price == null) return { ...o, netEdge: null, edge: null, kelly: 0, buyMax, maxEntry: buyMax, fairMax: U.breakEven(fair), rating: Math.round(U.clamp(50 + 40 * (fair - 0.5), 30, 85)) };
+    const fee = U.fee(price), cost = price + fee, ev = fair - cost, netEdge = fair - price;
+    return { ...o, netEdge, edge: netEdge, fee, cost, ev, roi: ev / cost, buyMax, maxEntry: buyMax, fairMax: U.breakEven(fair), kelly: ev > 0 ? ev / (1 - cost) * 0.25 : 0,
+      growth: ev > 0 ? fair * Math.log(fair / cost) + (1 - fair) * Math.log((1 - fair) / Math.max(1e-6, 1 - cost)) : 0,
+      rating: Math.round(U.clamp(40 + 59 * (1 - Math.exp(-Math.max(0, 62 + 14 * ((netEdge - 0.04) / 0.05) + 10 * (fair - 0.5) - 40) / 30)), 30, 99)), playable: netEdge >= 0.04 && price <= buyMax + 1e-9 };
+  }
+  /** the same bet as p, moved to another line (props: over that line; lines: same team/side) */
+  function variant(p, g, line) {
+    if (!p?.m || !ADJ.has(p.m.kind) || !p.m.th || line == null) return p;
+    return priceSide({ m: { ...p.m, th: thAt(p.m.kind, line) }, yes: p.yes, pside: p.data?.player?.side }, g);
+  }
+  // the line a pick is quoted at (props: "Over 14.5"; spreads/totals: the strike)
+  const lineOf = (p) => (p?.m?.th ? (p.m.kind === 'prop' ? p.m.th.k - 0.5 : p.m.th.line) : null);
+
   function feed(gameId) { return [...(FEED.get(gameId)?.values() || [])].sort((a, b) => b.firstSeen - a.firstSeen); }
   function allFeed() { const o = []; for (const f of FEED.values()) o.push(...f.values()); return o.sort((a, b) => b.firstSeen - a.firstSeen); }
 
-  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm, holdProb };
+  return { evaluate, evidence, statusLine, feed, allFeed, labels, fmtAm, holdProb, priceSide, variant, ladder, lineOf, thAt, findMarket, ADJ };
 })();
