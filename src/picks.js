@@ -141,6 +141,41 @@ const PICKS = (() => {
     }
   }
 
+
+  // ladder identity: rungs of one underlying bet whose YES probability falls as the line rises
+  function ladderKey(m) {
+    if (!m?.th || m.th.op === '<' || m.book) return null;
+    const seg = m.seg || 'G';
+    switch (m.kind) {
+      case 'prop': return `prop:${m.espnId || m.player}:${m.stat}`;
+      case 'total': return `total:${seg}`;
+      case 'teamtotal': return `tt:${seg}:${m.side}`;
+      case 'spread': return `sp:${seg}:${m.side}`;
+    }
+    return null;
+  }
+  // weighted isotonic regression, non-increasing in x (pool-adjacent-violators); returns Map x → fitted value
+  function isoDec(pts) {
+    const st = [];
+    for (const q of [...pts].sort((a, b) => a.x - b.x)) {
+      st.push({ y: q.y, w: q.w, xs: [q.x] });
+      while (st.length > 1 && st[st.length - 2].y < st[st.length - 1].y) { const b = st.pop(), a = st.pop(), w = a.w + b.w; st.push({ y: (a.y * a.w + b.y * b.w) / w, w, xs: a.xs.concat(b.xs) }); }
+    }
+    const out = new Map(); for (const blk of st) for (const x of blk.xs) out.set(x, blk.y); return out;
+  }
+  // market curve at any line: interpolated between fitted quotes (probit space); beyond them, the model's own
+  // shape carried by the nearest quote's market-vs-model shift
+  const zq = (q) => U.normInv(U.clamp(q, 0.002, 0.998));
+  function curveAt(F, L, modelAtL) {
+    const xs = [...F.curve.keys()].sort((a, b) => a - b);
+    if (F.curve.has(L)) return F.curve.get(L);
+    const lo = [...xs].reverse().find((x) => x < L), hi = xs.find((x) => x > L);
+    if (lo != null && hi != null) { const t = (L - lo) / (hi - lo); return U.normCdf(zq(F.curve.get(lo)) + t * (zq(F.curve.get(hi)) - zq(F.curve.get(lo)))); }
+    const e = lo != null ? lo : hi, mE = F.model.get(e), mL = modelAtL ?? F.model.get(L);
+    if (mE == null || mL == null) return F.curve.get(e);
+    return U.normCdf(zq(mL) + zq(F.curve.get(e)) - zq(mE));
+  }
+
   function evaluate(g) {
     const rec = INTEL.get(g.id);
     const ls = g.ls || MODEL.liveState(g);
@@ -148,7 +183,7 @@ const PICKS = (() => {
     const mk = [...kmk, ...bookMarkets(g, kmk, ls)];
     const ctx = { ls, sEff: g.sEff ?? g.pre?.spread ?? 2, tEff: g.tEff ?? g.pre?.total ?? 229 };
     const now = Date.now();
-    const out = [], pending = [], rejected = [];
+    const out = [], pending = [], rejected = [], rows = [];
     for (const m of mk) {
       if (m.yesAsk == null && m.noAsk == null) continue;
       let fp = null, kind = m.kind, why = [], data = {}, unc;
@@ -192,33 +227,76 @@ const PICKS = (() => {
       const quoteStale = !m.book && !m.snapAt && !!evAt && m.quoteAt < evAt && sinceScore < 120;
       const stale = quoteStale && sinceScore > 1.5 && Math.abs(move) >= 0.025;
       const lag = stale ? { sec: Math.round((now - m.quoteAt) / 1000), sinceScore: Math.round(sinceScore), move } : null;
-      // ---- market prior for props: blend the model with the live mid so information the model
-      // can't see (late scratches, minutes limits) pulls confidence back toward the market.
-      // A quote that predates the latest basket is stale and gets little weight.
-      let pFair = pModel, wModel = 1, gap = 0;
-      const mmid = MODEL.mid(m);
-      if (m.kind === 'prop' && mmid != null && m.yesAsk - m.yesBid <= 0.1) {
-        const nEff = data.player.proj.nEff;
-        gap = pModel - mmid;
-        wModel = quoteStale ? 0.85 : (data.live ? 0.62 : 0.55) + Math.min(0.1, nEff / 300);
-        // early season the model's history is least reliable (real-data test: it over-projects until roles settle),
-        // so a pregame prop leans further on the market until the player has 10 games this season
-        const nCur = data.player.proj.cur?.length || 0;
-        if (!quoteStale && !data.live && nCur < 10) wModel *= 0.8 + 0.02 * nCur;
-        // the further the model sits from a liquid market, the likelier the model is missing information
-        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.45, 1);
-        pFair = wModel * pModel + (1 - wModel) * mmid;
-        if (Math.abs(gap) > 0.25) unc += 0.03;
+      rows.push({ m, fp, kind, data, unc, pModel, quoteStale, lag, move, delayed });
+    }
+
+    // ---- pass 2: one market curve per ladder ----
+    // Each ladder (a player's PRA 20+/25+/30+, a total's lines, a team's spread lines) gets ONE monotone market curve
+    // fitted to its quotes (isotonic, weighted by liquidity), and ONE model weight for the whole ladder. Thin rungs
+    // borrow the curve from liquid neighbours instead of being blended (or not) on their own noisy quote, so the
+    // final probabilities can never run backwards (30+ above 25+), and a thin rung priced below its own ladder is
+    // a real, explainable edge rather than an automatic reject.
+    const fams = new Map();
+    for (const r of rows) {
+      const k = ladderKey(r.m); if (!k || r.m.prot) continue;
+      (fams.get(k) || fams.set(k, { rows: [] }).get(k)).rows.push(r);
+    }
+    for (const [k, F] of fams) {
+      F.rows.sort((a, b) => a.m.th.line - b.m.th.line);
+      F.model = new Map(F.rows.map((r) => [r.m.th.line, r.pModel]));
+      const pts = [];
+      for (const r of F.rows) {
+        const m = r.m, sp = m.yesAsk != null && m.yesBid != null ? m.yesAsk - m.yesBid : null;
+        if (sp == null || sp > 0.25 || !(m.yesBid > 0)) continue;
+        pts.push({ x: m.th.line, y: (m.yesAsk + m.yesBid) / 2, w: (1 + Math.log1p(m.vol || 0)) / (sp + 0.02) ** 2, liquid: sp <= 0.06 });
       }
-      // live game lines: same market prior (backtest: live lines ran ~4 pts overconfident without it);
-      // a quote that predates the latest score is stale, so it gets little weight (that is the LAG edge)
-      if (m.kind !== 'prop' && !m.book && !ls.pre && mmid != null && m.yesAsk - m.yesBid <= 0.08) {
-        gap = pModel - mmid;
-        wModel = quoteStale ? 0.85 : 0.65;
-        if (!quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.5, 1);
-        pFair = wModel * pModel + (1 - wModel) * mmid;
+      F.liquid = pts.some((q) => q.liquid);
+      F.curve = pts.length ? isoDec(pts) : null;
+      if (!F.curve) continue;
+      // one model weight for the ladder
+      const r0 = F.rows[0], isProp = r0.m.kind === 'prop';
+      // model weight: props by sample size; game lines 0.65 live, pregame 0.45 for the full game and 0.3 for a quarter/half
+      // (pregame segment splits are structural estimates; Kalshi's segment ladders are the better pregame read)
+      let w = isProp ? (r0.data.live ? 0.62 : 0.55) + Math.min(0.1, (r0.data.player.proj.nEff || 0) / 300) : !ls.pre ? 0.65 : r0.m.seg ? 0.3 : 0.45;
+      if (isProp && !r0.data.live) { const nCur = r0.data.player.proj.cur?.length || 0; if (nCur < 10) w *= 0.8 + 0.02 * nCur; }
+      let gs = 0, gw = 0; for (const q of pts) { gs += q.w * Math.abs(F.model.get(q.x) - F.curve.get(q.x)); gw += q.w; }
+      const gapF = gw ? gs / gw : 0;
+      if (gapF > 0.12) w *= U.clamp(1 - (gapF - 0.12) / 0.45, isProp ? 0.45 : 0.5, 1);
+      F.w = w; F.gap = gapF;
+      for (const r of F.rows) {
+        const L = r.m.th.line, prior = curveAt(F, L);
+        const wr = r.quoteStale ? 0.85 : w; // a quote that predates the latest basket carries little information (LAG)
+        r.blend = { p: wr * r.pModel + (1 - wr) * prior, prior, w: wr, gap: r.pModel - prior };
+        if (Math.abs(r.pModel - prior) > 0.25) r.unc += 0.03;
       }
-      fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
+      // final guarantee: the ladder's probabilities never increase with the line
+      const fin = isoDec(F.rows.map((r) => ({ x: r.m.th.line, y: r.blend.p, w: 1 })));
+      for (const r of F.rows) r.blend.p = fin.get(r.m.th.line);
+      F.fit = [...F.rows].map((r) => ({ L: r.m.th.line, p: r.blend.p, model: r.pModel, prior: r.blend.prior }));
+    }
+
+    // ---- pass 3: gates and picks ----
+    for (const r of rows) {
+      const { m, kind, data, lag, move, delayed } = r;
+      let unc = r.unc, fp = r.fp, gap = 0;
+      const pModel = r.pModel, mmid = MODEL.mid(m);
+      const F = fams.get(ladderKey(m));
+      if (r.blend) { gap = r.blend.gap; fp = { ...fp, p: r.blend.p, pModel, mmid, prior: r.blend.prior, wModel: r.blend.w, gap, ladder: F.rows.length }; }
+      else if (m.prot && F?.fit) {
+        // protected-ladder twin of a regular rung: same event, so it takes the regular ladder's probability
+        const t = F.fit.find((x) => Math.abs(x.L - m.th.line) < 1e-6);
+        fp = { ...fp, p: t ? t.p : pModel, pModel, mmid, wModel: 1, gap: 0 };
+      } else {
+        // markets outside a ladder (moneylines, margins, OT): blend with their own liquid quote while live
+        let pFair = pModel, wModel = 1;
+        if (m.kind !== 'prop' && !m.book && !ls.pre && mmid != null && m.yesAsk - m.yesBid <= 0.08) {
+          gap = pModel - mmid;
+          wModel = r.quoteStale ? 0.85 : 0.65;
+          if (!r.quoteStale && Math.abs(gap) > 0.12) wModel *= U.clamp(1 - (Math.abs(gap) - 0.12) / 0.45, 0.5, 1);
+          pFair = wModel * pModel + (1 - wModel) * mmid;
+        }
+        fp = { ...fp, p: pFair, pModel, mmid, wModel, gap };
+      }
       data.fp = fp;
 
       // trend sanitization inputs (props): hit history at this threshold vs the context-adjusted projection
@@ -249,8 +327,16 @@ const PICKS = (() => {
         // expected log-growth of full Kelly (KL divergence): balances edge against hit rate
         const growth = ev > 0 ? fair * Math.log(fair / cost) + (1 - fair) * Math.log((1 - fair) / Math.max(1e-6, 1 - cost)) : 0;
         let reason = null;
-        if (!m.book && (spreadQ > 0.12 || !(bidSide > 0.005))) reason = `ILLIQUID: ${!(bidSide > 0.005) ? 'no resting bid' : `bid-ask spread ${Math.round(spreadQ * 100)}¢`}`;
+        let thin = null;
+        if (!m.book && (spreadQ > 0.12 || !(bidSide > 0.005))) {
+          // a thin rung is tradable at its ask; keep it only when the liquid rungs of the same ladder price it higher
+          // than the ask (the market contradicts itself) and the edge is at least +6.00%
+          const prior = fp.prior != null ? (yes ? fp.prior : 1 - fp.prior) : null;
+          if (F?.liquid && prior != null && price <= prior - 0.02 && netEdge >= 0.06) thin = { prior };
+          else reason = `ILLIQUID: ${!(bidSide > 0.005) ? 'no resting bid' : `bid-ask spread ${Math.round(spreadQ * 100)}¢`}${prior != null ? ` (ladder values it at ${Math.round(prior * 100)}¢)` : ''}`;
+        }
         else if (delayed > 10) reason = `PRICE STALE: Kalshi feed ${Math.round(delayed)} min old (> 10 min)`;
+        else if (r.blend && F?.liquid && F.gap > 0.22 && !r.quoteStale) reason = `MARKET CONFLICT: model ${(pModel * 100).toFixed(0)}% vs Kalshi's liquid ladder ${(fp.prior * 100).toFixed(0)}% — a gap this large usually means the model is missing news (minutes, role, injury)`;
         else if (netEdge < 0.04 || ev <= 0) reason = `EDGE ${U.signed(netEdge * 100, 2)}% < +4.00% minimum`;
         else if (fair < 0.30 && !(netEdge >= 0.10 && roi >= 0.6)) reason = `TRUE PROBABILITY ${(fair * 100).toFixed(2)}% < 30.00% floor`;
         else if (trend && trend.l10 >= 0.7 && trend.regress) reason = `TREND SANITIZED: L10 ${trend.hh.l10.h}/${trend.hh.l10.n} but projection ${trend.muAdj.toFixed(1)} < 95% of L10 avg ${trend.hh.avg10.toFixed(1)}`;
@@ -266,7 +352,7 @@ const PICKS = (() => {
         out.push({
           id: m.ticker + (yes ? ':Y' : ':N'), ticker: m.ticker, gameId: g.id, kind, seg: m.seg, stat: m.stat, side: yes ? 'YES' : 'NO',
           label: lb.t, sub: lb.s, price, implied, fair, netEdge, edge: netEdge, ev, cost, fee, roi, be: fairMax, fairMax, maxEntry: buyMax, buyMax, kelly: kellyFull * 0.25, scale, unc, safety, rating, tier,
-          survivor: !reason, reason, trend, growth, fam: famKey(m, yes),
+          survivor: !reason, reason, trend, growth, fam: famKey(m, yes), thin,
           playable: !reason && price <= buyMax + 1e-9,
           lag: lag && Math.sign(move) === (yes ? 1 : -1) ? lag : null,
           live: !ls.pre, liq: { spread: spreadW, vol: m.vol, oi: m.oi }, m, data, yes, book: m.book || null, delayed: delayed || 0, am: m.book ? (yes ? m.yesAm : m.noAm) : null,
@@ -278,12 +364,12 @@ const PICKS = (() => {
     for (const p of out) { const b = best.get(p.ticker); if (!b || p.edge > b.edge) best.set(p.ticker, p); }
     const picks = [...best.values()].sort((a, b) => (b.survivor - a.survivor) || b.netEdge - a.netEdge);
     const survivors = picks.filter((p) => p.survivor);
-    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, illiquid: 0, stale: 0, roster: rejected.length };
-    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; else if (/ILLIQUID/.test(p.reason)) audit.illiquid++; else if (/STALE/.test(p.reason)) audit.stale++; }
+    const audit = { priced: picks.length, survived: survivors.length, edge: 0, floor: 0, trend: 0, illiquid: 0, stale: 0, conflict: 0, roster: rejected.length };
+    for (const p of picks) if (p.reason) { if (/^EDGE/.test(p.reason)) audit.edge++; else if (/FLOOR|floor/.test(p.reason)) audit.floor++; else if (/TREND/.test(p.reason)) audit.trend++; else if (/ILLIQUID/.test(p.reason)) audit.illiquid++; else if (/STALE/.test(p.reason)) audit.stale++; else if (/CONFLICT/.test(p.reason)) audit.conflict++; }
     const pricedKeys = new Set(picks.filter((p) => p.kind === 'prop').map((p) => `${p.data.player.espnId}:${p.stat}`));
     const models = modelPicks(g, rec, ls, pricedKeys);
     updateFeed(g, picks);
-    return { picks, survivors, audit, rejected, models, all: out, pending, at: now };
+    return { picks, survivors, audit, rejected, models, all: out, pending, fams, at: now };
   }
 
   function updateFeed(g, picks) {
@@ -330,7 +416,8 @@ const PICKS = (() => {
       // ---- DISCREPANCY ARBITRAGE ----
       if (!p.modelOnly) {
         const mktMu = sd > 0 ? (k - 0.5) - sd * U.normInv(1 - p.price) : null;
-        sec.arb.push(`${priceTxt}. Model P(${S} ≥ ${k}) = ${P2(fp.pModel ?? fp.p)} from a ${f1(mu)} ± ${f1(sd)} projection${fp.mmid != null && fp.wModel < 1 ? `; market-prior blend (${Math.round((1 - fp.wModel) * 100)}% weight on mid ${P2(fp.mmid)})` : ''} → true ${P2(p.fair)}.`);
+        sec.arb.push(`${priceTxt}. Model P(${S} ≥ ${k}) = ${P2(fp.pModel ?? fp.p)} from a ${f1(mu)} ± ${f1(sd)} projection${fp.prior != null ? `; Kalshi ladder curve ${P2(fp.prior)} (one monotone curve fitted to all ${fp.ladder} ${S} lines, weighted by liquidity) at ${Math.round((1 - fp.wModel) * 100)}% weight` : fp.mmid != null && fp.wModel < 1 ? `; market-prior blend (${Math.round((1 - fp.wModel) * 100)}% weight on mid ${P2(fp.mmid)})` : ''} → true ${P2(p.fair)}.`);
+        if (p.thin) sec.arb.push(`Thin book (wide spread or no bid) — kept because the liquid lines of the same ladder value this contract at ${(p.thin.prior * 100).toFixed(0)}¢, above the ${(p.price * 100).toFixed(0)}¢ ask, and the edge clears +6%.`);
         if (mktMu != null && isFinite(mktMu)) sec.arb.push(`The ask prices a ${f1(mktMu)} ${S} mean under the same σ; the model projects ${f1(mu)} (${U.signed(mu - mktMu, 1)}).`);
         sec.arb.push(`Net edge ${U.signed(p.netEdge * 100, 2)}%; after the ${m.book ? 'book vig' : `$${p.fee.toFixed(3)} taker fee`} EV ${p.ev >= 0 ? '+' : '−'}$${Math.abs(p.ev).toFixed(3)} per $1 contract (ROI ${U.signed(p.roi * 100, 1)}%).`);
       } else {
@@ -505,7 +592,8 @@ const PICKS = (() => {
   const sameSubject = (x, m) => (m.kind === 'prop' ? x.stat === m.stat && ((m.espnId && x.espnId === m.espnId) || U.nameScore(x.player || '', m.player || '') >= 0.8) : m.kind === 'total' ? true : x.side === m.side);
   function findMarket(m, g) {
     if (!m.th) return KALSHI.marketsFor(g.kkey).find((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.side === m.side) || null;
-    return KALSHI.marketsFor(g.kkey).find((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.th && x.th.op !== '<' && sameSubject(x, m) && (m.kind === 'prop' ? x.th.k === m.th.k : Math.abs(x.th.line - m.th.line) < 1e-6)) || null;
+    const c = KALSHI.marketsFor(g.kkey).filter((x) => x.kind === m.kind && (x.seg || null) === (m.seg || null) && x.th && x.th.op !== '<' && sameSubject(x, m) && (m.kind === 'prop' ? x.th.k === m.th.k : Math.abs(x.th.line - m.th.line) < 1e-6));
+    return c.find((x) => !x.prot) || c[0] || null; // the regular market, not its empty "protected" twin
   }
   const thAt = (kind, line) => (kind === 'prop' ? { op: '>=', line: Math.ceil(line) - 0.5, k: Math.ceil(line) } : { op: '>', line, k: Math.floor(line) + 1 });
   // every Kalshi line that exists for this bet (for the line chips)
@@ -526,24 +614,17 @@ const PICKS = (() => {
     const pl = m.kind === 'prop' && rec ? ((m.espnId && rec.players.get(m.espnId)) || [...rec.players.values()].find((x) => U.nameScore(x.name, m.player || '') >= 0.8)) : null;
     const price = mk ? (d.yes ? mk.yesAsk : mk.noAsk) : null;
     let fair = h.p;
-    // a line Kalshi doesn't list: carry over the market adjustment the pick engine applied at the nearest listed
-    // line of the same ladder (probit shift), so moving the line keeps the numbers consistent and monotone
+    // a line Kalshi doesn't list: same ladder math as the listed rungs — the ladder's market curve at this line and
+    // the ladder's model weight — then kept between the neighbouring listed rungs so the order can't break
+    if (mk && fair != null && h.status === 'live' && m.th) { const t = g.eval?.fams?.get(ladderKey(m))?.fit?.find((x) => Math.abs(x.L - m.th.line) < 1e-6); if (t) fair = d.yes ? t.p : 1 - t.p; }
     if (!mk && fair != null && h.status === 'live' && m.th) {
-      const anchors = (g.eval?.all || []).filter((x) => x.m.kind === m.kind && (x.m.seg || null) === (m.seg || null) && x.m.th && x.m.th.op !== '<' && sameSubject(x.m, m) && x.data?.fp?.pModel != null);
-      if (anchors.length) {
-        // P(YES) at each listed line: engine's blended value and the model's own
-        const z = (q) => U.normInv(U.clamp(q, 0.002, 0.998));
-        const pts = new Map();
-        for (const a of anchors) if (!pts.has(a.m.th.line)) pts.set(a.m.th.line, { L: a.m.th.line, b: a.yes ? a.fair : 1 - a.fair, mo: a.data.fp.pModel });
-        const arr = [...pts.values()].sort((x, y) => x.L - y.L), L = m.th.line;
-        const lo = [...arr].reverse().find((x) => x.L < L), hi = arr.find((x) => x.L > L);
-        const sh = (x) => z(x.b) - z(x.mo);
-        const shift = lo && hi ? sh(lo) + (sh(hi) - sh(lo)) * (L - lo.L) / (hi.L - lo.L) : sh(lo || hi);
-        let adjY = U.normCdf(z(d.yes ? fair : 1 - fair) + shift);
-        // YES is "over / wins by more": it can only get less likely as the line rises — stay between the neighbours
-        if (lo) adjY = Math.min(adjY, lo.b);
-        if (hi) adjY = Math.max(adjY, hi.b);
-        fair = d.yes ? adjY : 1 - adjY;
+      const F = g.eval?.fams?.get(ladderKey(m));
+      if (F?.curve && F.fit?.length) {
+        const modelY = d.yes ? fair : 1 - fair, L = m.th.line;
+        let y = F.w * modelY + (1 - F.w) * curveAt(F, L, modelY);
+        const lo = [...F.fit].reverse().find((x) => x.L < L), hi = F.fit.find((x) => x.L > L);
+        if (lo) y = Math.min(y, lo.p); if (hi) y = Math.max(y, hi.p);
+        fair = d.yes ? y : 1 - y;
       }
     }
     const lb = labels(m, g, !!d.yes);

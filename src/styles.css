@@ -824,3 +824,4 @@ body.has-fab .fbody, body.has-fab .page { padding-bottom: 86px; }
 .lrow .lreset { margin-left: auto; flex: none; padding: 4px 8px; font-size: 14px; }
 .cp-head { display: flex; justify-content: space-between; align-items: center; }
 .cp-head b { font: 600 17px/1 var(--f-display); letter-spacing: 0.03em; }
+.chipx.thin { color: #fff1b8; border-color: rgba(255, 201, 74, 0.6); background: rgba(255, 201, 74, 0.14); }

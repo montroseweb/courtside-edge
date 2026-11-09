@@ -127,6 +127,29 @@ Some early-season over-projection remains (lines called 55% have hit ~44% since 
 sample), which is why pregame props for players with fewer than 10 games lean further on the
 Kalshi price, and every pick still needs +4% edge after the blend.
 
+### Stress test on tonight's live slate (Nov 9, 8 games, 5,754 priced contracts)
+
+Run against live ESPN data and the live Kalshi feed before shipping:
+
+- **Teammate absences were compounding.** Kyshawn George (3 Wizards teammates OUT) was projected
+  at 41.6 PRA (season average 28) because each absence's with/without split multiplied the next one
+  and also credited his role change from last season. Now: same-season splits, scaled by how much of
+  his recent sample still had the teammate, added with caps. Real-data test on 12,373 games with
+  absent teammates: calibration error 2.61 → 2.19 pts (old method) and the pile-up cases that made
+  lines called 55% hit 39% are gone.
+- **Ladders could run backwards** (his 30+ PRA showed 85.6%, above 25+ at 60.2%): each rung was
+  blended with its own quote only when that quote was tight. Now one isotonic Kalshi curve per ladder
+  and one model weight per ladder → 0 order violations across 572 ladders, 0 among line-stepper
+  values.
+- **299 pregame quarter/half "edges" were fabricated** by an even split of the game total across
+  quarters. Real 2025-26 shares (1,231 games): Q1 25.5%, Q2 25.0%, Q3 25.4%, Q4 24.0%; pregame
+  segment lines now lean 70% on their Kalshi ladder. 17 remain.
+- **Market conflict gate:** 54 contracts where the model and a liquid ladder disagreed by more than
+  22 points are blocked (mostly one player's whole ladder).
+- **History charts** show real box scores again (the season-drift rescale had leaked into them).
+
+Survivors went from 489 to 100 on the same slate — the removed ones were the fabricated edges above.
+
 ## Lines you choose
 
 Every prop, spread, total and team total card has a line stepper (− / +) and chips for the lines

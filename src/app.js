@@ -126,7 +126,7 @@ const APP = (() => {
         const sd = MODEL.SIG_T * Math.sqrt(g.ls.tau);
         let s = 0, w = 0; for (const r of tl) { if (r.p == null || r.p < 0.05 || r.p > 0.95) continue; const mu = r.line + sd * U.normInv(r.p); const wt = r.p * (1 - r.p); s += mu * wt; w += wt; }
         if (w) {
-          const rm = U.clamp((s / w - g.ls.total) / g.ls.rem, 3.4, 6.0);
+          const rm = U.clamp((s / w - g.ls.total) / Math.max(0.5, MODEL.remPace(g.ls)), 3.4, 6.0);
           g.rMkt = g.rMkt == null ? rm : g.rMkt * 0.85 + rm * 0.15;
         }
       }

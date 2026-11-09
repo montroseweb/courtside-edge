@@ -12,6 +12,17 @@ const MODEL = (() => {
   const SIG_T = 18.5;  // full-game total sd
   const SIG_TEAM = 12.5;
   const SIG_SEG = 15.0; // quarter margins have sd ≈ 7.5
+  // scoring is not uniform across quarters: shares measured on 1,231 real 2025-26 regular-season games
+  // (Q4 averages 55.3 points vs 58.7 in Q1). QF = relative scoring rate per minute in each quarter; OT = 1.
+  const QF = [0.2552, 0.2502, 0.2541, 0.2404].map((x) => x * 4);
+  // pace-weighted minutes between elapsed minutes a and b (regulation quarters weighted by QF)
+  function paceMin(a, b) {
+    if (!(b > a)) return 0;
+    let t = 0;
+    for (let q = 0; q < 4; q++) { const lo = Math.max(a, q * 12), hi = Math.min(b, q * 12 + 12); if (hi > lo) t += (hi - lo) * QF[q]; }
+    if (b > 48) t += b - Math.max(a, 48);
+    return t;
+  }
   const SEGS = { Q1: [0, 12], Q2: [12, 24], Q3: [24, 36], Q4: [36, 48], '1H': [0, 24], '2H': [24, 48] };
 
   const mid = (m) => (m && m.yesBid != null && m.yesAsk != null && m.yesAsk > 0 && m.yesAsk - m.yesBid <= 0.12 ? (m.yesBid + m.yesAsk) / 2 : null);
@@ -106,12 +117,12 @@ const MODEL = (() => {
     if (ls.post) return { mu: ls.total, sd: 0.01 };
     const preRate = tEff / 48;
     const el = ls.elapsed;
-    const liveRate = el > 0.5 ? ls.total / el : preRate;
+    const liveRate = el > 0.5 ? ls.total / Math.max(0.5, paceMin(0, el)) : preRate;
     const w = 18 / (18 + el);
     let rate = w * preRate + (1 - w) * liveRate;
     rate = U.clamp(rate, preRate * 0.8, preRate * 1.2);
     if (g && g.rMkt != null) rate = 0.5 * rate + 0.5 * g.rMkt; // market-implied remaining scoring rate (quiet periods only)
-    let mu = ls.total + rate * ls.rem;
+    let mu = ls.total + rate * remPace(ls);
     if (ls.rem < 2 && Math.abs(ls.margin) <= 8 && ls.period >= 4) mu += ls.rem < 1 ? 3 : 1.8; // late fouling
     return { mu, sd: Math.max(1.2, Math.sqrt(SIG_T * SIG_T * ls.tau + 1.6 * lateVar(ls.rem))) };
   }
@@ -133,9 +144,12 @@ const MODEL = (() => {
     const pre = U.clamp((tEff + sgn * sEff) / 2 / 48, 1.8, 3.0);
     const el = ls.elapsed, pts = side === 'home' ? g.home.score : g.away.score;
     if (el < 3) return { rate: pre, pre, live: null, w: 1 };
-    const live = pts / el, w = 22 / (22 + el);
+    const live = pts / Math.max(1, paceMin(0, el)), w = 22 / (22 + el);
     return { rate: U.clamp(w * pre + (1 - w) * live, pre * 0.8, pre * 1.2), pre, live, w };
   }
+  // pace-weighted minutes left in the game / in a segment
+  const remPace = (ls) => (ls.pre ? paceMin(0, 48) : ls.rem > 0 ? paceMin(ls.elapsed, ls.elapsed + ls.rem) : 0);
+  function segPace(ls, seg, ss) { const [a, b] = SEGS[seg]; return ss.remSeg > 0 ? paceMin(Math.max(a, b - ss.remSeg), b) : 0; }
   function lateTeamBump(ls) { return ls.rem < 2 && Math.abs(ls.margin) <= 8 && ls.period >= 4 ? (ls.rem < 1 ? 1.5 : 0.9) : 0; }
 
   // ---------- fair probability for a game-line market ----------
@@ -156,13 +170,13 @@ const MODEL = (() => {
       }
       if (m.kind === 'teamtotal' && th && m.side) {
         const so = m.side === 'home' ? ss.hm : ss.am, tr = teamRate(g, ls, m.side, sEff, tEff);
-        const tmu = so + tr.rate * ss.remSeg, tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
+        const tmu = so + tr.rate * segPace(ls, m.seg, ss), tsd = SIG_TEAM * 1.1 * Math.sqrt(ss.remSeg / 48);
         return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so, tr };
       }
       if (m.kind === 'spread' && th && m.side) return { p: atLeast(th.k, sideSign * mu, sd), mu: sideSign * mu, sd };
       if (m.kind === 'total' && th) {
         const rh = teamRate(g, ls, 'home', sEff, tEff), ra = teamRate(g, ls, 'away', sEff, tEff);
-        const tmu = ss.segTotal + (rh.rate + ra.rate) * ss.remSeg, tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
+        const tmu = ss.segTotal + (rh.rate + ra.rate) * segPace(ls, m.seg, ss), tsd = SIG_T * Math.sqrt(ss.remSeg / 48);
         return { p: atLeast(th.k, tmu, tsd), mu: tmu, sd: tsd, so: ss.segTotal };
       }
       return null;
@@ -204,7 +218,7 @@ const MODEL = (() => {
       const cur = m.side === 'home' ? g.home.score : g.away.score;
       if (ls.post) return { p: cur >= th.k ? 1 : 0, mu: cur, sd: 0 };
       const tr = teamRate(g, ls, m.side, sEff, tEff);
-      const mu = cur + tr.rate * ls.rem + lateTeamBump(ls), sd = Math.max(0.8, Math.sqrt(SIG_TEAM * SIG_TEAM * ls.tau + 0.8 * lateVar(ls.rem)));
+      const mu = cur + tr.rate * remPace(ls) + lateTeamBump(ls), sd = Math.max(0.8, Math.sqrt(SIG_TEAM * SIG_TEAM * ls.tau + 0.8 * lateVar(ls.rem)));
       return { p: atLeast(th.k, mu, sd), mu, sd, tr };
     }
     return null;
@@ -234,7 +248,7 @@ const MODEL = (() => {
   // projection settings, chosen by a walk-forward test on real ESPN game logs (README → Model validation):
   // mv = minutes-aware spread, curK = this season's minutes take over fast, shortQ = short-night scenario.
   // wins (capping big games) and other half-lives tested worse and stay off.
-  const PROJ_OPT = { hl: 10, prevW: 0.55, wins: 0, minMed: false, vf: 1, mv: 1, curK: 2, prevMinF: 1, shortQ: true };
+  const PROJ_OPT = { hl: 10, prevW: 0.55, wins: 0, minMed: false, vf: 1, mv: 1, curK: 2, prevMinF: 1, shortQ: true, mate: 'v2' };
   // league-wide season drift: how this season's per-minute production and minutes compare with last season for
   // the same players, pooled over every loaded player (computed by INTEL); last-season rows are rescaled by it
   function driftOf(players, season) {
@@ -256,6 +270,7 @@ const MODEL = (() => {
   }
   function projectPlayer(logs, ctx) {
     const D = ctx.drift;
+    const rawGames = (logs || []).filter((r) => r.min >= 4); // real box scores (charts, hit rates, head-to-head)
     if (D) logs = (logs || []).map((r) => (r.season === ctx.season ? r : { ...r, min: r.min * D.min, pts: r.pts * D.pts, reb: r.reb * D.reb, ast: r.ast * D.ast, fg3m: (r.fg3m || 0) * D.fg3m, stl: r.stl * D.stl, blk: r.blk * D.blk }));
     const games = (logs || []).filter((r) => r.min >= 4);
     if (games.length < 3) return null;
@@ -301,50 +316,108 @@ const MODEL = (() => {
     const sp = Math.abs(ctx.spreadTeam || 0);
     if (sp > 8 && minProj > 26) { const f = Math.max(0.9, 1 - 0.006 * (sp - 8)); minProj *= f; notes.push({ k: 'blowout', t: `Blowout risk (spread ${sp.toFixed(1)}) trims starter minutes ${(100 - f * 100).toFixed(1)}%` }); }
 
-    // teammate absences: with/without splits where available
+    // teammate absences (official OUT / DOUBTFUL). v2 (default): with/without splits inside each season (a role
+    // change between seasons can't masquerade as an injury effect), scaled by how much of the player's recent
+    // weighted sample still had the teammate (if he has been out for weeks, recent form already prices it), and
+    // added — not multiplied — across absent teammates, with hard caps. v1 is the old compounding version.
     const mateFx = {}; for (const s of STATS) mateFx[s] = 1;
     const mateNotes = [];
-    for (const mate of ctx.outMates || []) {
-      const mlogs = (mate.logs || []).filter((r) => r.min > 0);
-      const mDates = new Set(mlogs.map((r) => Math.floor(r.date / 864e5)));
-      const sameSeason = games.filter((r) => r.season === ctx.season || r.season === ctx.season - 1);
-      const onTeam = mlogs.length > 0;
-      if (!onTeam) continue;
-      // only use seasons in which the teammate logged games (proxy for being on the roster)
-      const mSeasons = new Set(mlogs.map((r) => r.season));
-      const pool = sameSeason.filter((r) => mSeasons.has(r.season));
-      const without = pool.filter((r) => !mDates.has(Math.floor(r.date / 864e5)));
-      const withG = pool.filter((r) => mDates.has(Math.floor(r.date / 864e5)));
-      const mateAvg = U.mean(mlogs.slice(0, 15).map((r) => r.pts));
-      const mw = mate.w ?? 1; // OUT = 1, DOUBTFUL = 0.75
-      if (without.length >= 2 && withG.length >= 3) {
+    if (O.mate === 'v1') {
+      const mateFx = {}; for (const s of STATS) mateFx[s] = 1;
+      const mateNotes = [];
+      for (const mate of ctx.outMates || []) {
+        const mlogs = (mate.logs || []).filter((r) => r.min > 0);
+        const mDates = new Set(mlogs.map((r) => Math.floor(r.date / 864e5)));
+        const sameSeason = games.filter((r) => r.season === ctx.season || r.season === ctx.season - 1);
+        const onTeam = mlogs.length > 0;
+        if (!onTeam) continue;
+        // only use seasons in which the teammate logged games (proxy for being on the roster)
+        const mSeasons = new Set(mlogs.map((r) => r.season));
+        const pool = sameSeason.filter((r) => mSeasons.has(r.season));
+        const without = pool.filter((r) => !mDates.has(Math.floor(r.date / 864e5)));
+        const withG = pool.filter((r) => mDates.has(Math.floor(r.date / 864e5)));
+        const mateAvg = U.mean(mlogs.slice(0, 15).map((r) => r.pts));
+        const mw = mate.w ?? 1; // OUT = 1, DOUBTFUL = 0.75
+        if (without.length >= 2 && withG.length >= 3) {
+          const parts = [];
+          const uW = usage(without.filter((r) => r.fga != null)), uWi = usage(withG.filter((r) => r.fga != null));
+          if (uW != null && uWi != null) usageInfo.mates.push({ name: mate.name, code: mate.code || 'OUT', with: uWi, without: uW, n: without.length, nWith: withG.length });
+          for (const s of STATS) {
+            const rw = U.sum(without.map((r) => r[s])) / Math.max(1, U.sum(without.map((r) => r.min)));
+            const rwi = U.sum(withG.map((r) => r[s])) / Math.max(1, U.sum(withG.map((r) => r.min)));
+            if (rwi > 0) {
+              const wt = mw * without.length / (without.length + 4);
+              const f = U.clamp(1 + wt * (rw / rwi - 1), 0.85, 1.3);
+              mateFx[s] *= f;
+              if (s === 'pts' || s === 'ast' || s === 'reb') parts.push(`${SHORT[s]} ${U.signed((f - 1) * 100, 0)}%`);
+            }
+          }
+          const minW = U.mean(without.map((r) => r.min)), minWi = U.mean(withG.map((r) => r.min));
+          if (isFinite(minW) && isFinite(minWi)) minProj *= U.clamp(1 + (without.length / (without.length + 4)) * (minW / minWi - 1), 0.92, 1.12);
+          mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — with/without split, ${without.length} games without vs ${withG.length} with: ${parts.join(', ')}`);
+        } else if (isFinite(mateAvg) && mateAvg >= 8) {
+          // usage redistribution heuristic
+          const teamPts = ctx.teamAvgPts || 114;
+          const myPts = U.wmean(games.map((r) => r.pts), w);
+          const share = myPts / Math.max(30, teamPts - mateAvg);
+          const missedRecent = games.slice(0, 3).every((r) => !mDates.has(Math.floor(r.date / 864e5)));
+          const bump = 0.6 * mw * mateAvg * share * (missedRecent ? 0.5 : 1);
+          const f = U.clamp(1 + bump / Math.max(3, myPts), 1, 1.18);
+          mateFx.pts *= f; mateFx.fg3m *= 1 + (f - 1) * 0.8; mateFx.ast *= 1 + (f - 1) * 0.6; mateFx.reb *= 1 + (f - 1) * 0.4;
+          mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official, ${mateAvg.toFixed(1)} ppg) — fewer than 2 games without him in the logs; scoring-share redistribution ${U.signed((f - 1) * 100, 0)}% PTS${missedRecent ? ' (absent from the last 3 games already, half weight)' : ''}`);
+        }
+      }
+
+    } else if (O.mate !== 'off') {
+      const add = {}; for (const s of STATS) add[s] = 0;
+      let minAdd = 0;
+      for (const mate of ctx.outMates || []) {
+        const mlogs = (mate.logs || []).filter((r) => r.min > 0);
+        if (!mlogs.length) continue;
+        const mDays = new Set(mlogs.map((r) => Math.floor(r.date / 864e5)));
+        const played = (r) => mDays.has(Math.floor(r.date / 864e5));
+        const mw = mate.w ?? 1;
+        let ws = 0, wt = 0;
+        games.forEach((r, i) => { if (r.season === ctx.season || r.season === ctx.season - 1) { wt += w[i]; if (played(r)) ws += w[i]; } });
+        const share = wt ? ws / wt : 0;
+        if (share < 0.05) { mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — already absent from his recent games; nothing new to add`); continue; }
+        const mSeasons = new Set(mlogs.map((r) => r.season));
+        const eff = {}; for (const st of STATS) eff[st] = [0, 0];
+        let nWo = 0, nWi = 0, me = 0, mn = 0;
+        for (const season of [ctx.season, ctx.season - 1]) {
+          if (!mSeasons.has(season)) continue;
+          const pool = games.filter((r) => r.season === season);
+          const wo = pool.filter((r) => !played(r)), wi = pool.filter(played);
+          if (wo.length < 2 || wi.length < 3) continue;
+          nWo += wo.length; nWi += wi.length;
+          const n = (wo.length * wi.length) / (wo.length + wi.length);
+          for (const st of STATS) {
+            const rw = U.sum(wo.map((r) => r[st] || 0)) / Math.max(1, U.sum(wo.map((r) => r.min)));
+            const rwi = U.sum(wi.map((r) => r[st] || 0)) / Math.max(1, U.sum(wi.map((r) => r.min)));
+            if (rwi > 0) { eff[st][0] += n * (rw / rwi - 1); eff[st][1] += n; }
+          }
+          const mW = U.mean(wo.map((r) => r.min)), mWi = U.mean(wi.map((r) => r.min));
+          if (isFinite(mW) && isFinite(mWi) && mWi > 0) { me += n * (mW / mWi - 1); mn += n; }
+        }
         const parts = [];
-        const uW = usage(without.filter((r) => r.fga != null)), uWi = usage(withG.filter((r) => r.fga != null));
-        if (uW != null && uWi != null) usageInfo.mates.push({ name: mate.name, code: mate.code || 'OUT', with: uWi, without: uW, n: without.length, nWith: withG.length });
-        for (const s of STATS) {
-          const rw = U.sum(without.map((r) => r[s])) / Math.max(1, U.sum(without.map((r) => r.min)));
-          const rwi = U.sum(withG.map((r) => r[s])) / Math.max(1, U.sum(withG.map((r) => r.min)));
-          if (rwi > 0) {
-            const wt = mw * without.length / (without.length + 4);
-            const f = U.clamp(1 + wt * (rw / rwi - 1), 0.85, 1.3);
-            mateFx[s] *= f;
-            if (s === 'pts' || s === 'ast' || s === 'reb') parts.push(`${SHORT[s]} ${U.signed((f - 1) * 100, 0)}%`);
+        if (nWo) {
+          const shr = (nWo / (nWo + 6)) * share * mw;
+          for (const st of STATS) if (eff[st][1]) { const e = shr * U.clamp(eff[st][0] / eff[st][1], -0.15, 0.3); add[st] += e; if (st === 'pts' || st === 'ast' || st === 'reb') parts.push(`${SHORT[st]} ${U.signed(e * 100, 0)}%`); }
+          if (mn) minAdd += shr * U.clamp(me / mn, -0.08, 0.12);
+          mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — same-season with/without split (${nWo} games without, ${nWi} with), ${Math.round(share * 100)}% of his recent sample had him: ${parts.join(', ')}`);
+        } else {
+          const mateAvg = U.mean(mlogs.slice(0, 15).map((r) => r.pts));
+          if (isFinite(mateAvg) && mateAvg >= 8) {
+            const myPts = U.wmean(games.map((r) => r.pts), w), teamPts = ctx.teamAvgPts || 114;
+            const shareP = myPts / Math.max(30, teamPts - mateAvg);
+            const e = U.clamp((0.5 * mw * mateAvg * shareP * share) / Math.max(3, myPts), 0, 0.12);
+            add.pts += e; add.fg3m += e * 0.8; add.ast += e * 0.6; add.reb += e * 0.4;
+            mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official, ${mateAvg.toFixed(1)} ppg) — too few split games; scoring-share redistribution ${U.signed(e * 100, 0)}% PTS (${Math.round(share * 100)}% of his recent sample had him)`);
           }
         }
-        const minW = U.mean(without.map((r) => r.min)), minWi = U.mean(withG.map((r) => r.min));
-        if (isFinite(minW) && isFinite(minWi)) minProj *= U.clamp(1 + (without.length / (without.length + 4)) * (minW / minWi - 1), 0.92, 1.12);
-        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official) — with/without split, ${without.length} games without vs ${withG.length} with: ${parts.join(', ')}`);
-      } else if (isFinite(mateAvg) && mateAvg >= 8) {
-        // usage redistribution heuristic
-        const teamPts = ctx.teamAvgPts || 114;
-        const myPts = U.wmean(games.map((r) => r.pts), w);
-        const share = myPts / Math.max(30, teamPts - mateAvg);
-        const missedRecent = games.slice(0, 3).every((r) => !mDates.has(Math.floor(r.date / 864e5)));
-        const bump = 0.6 * mw * mateAvg * share * (missedRecent ? 0.5 : 1);
-        const f = U.clamp(1 + bump / Math.max(3, myPts), 1, 1.18);
-        mateFx.pts *= f; mateFx.fg3m *= 1 + (f - 1) * 0.8; mateFx.ast *= 1 + (f - 1) * 0.6; mateFx.reb *= 1 + (f - 1) * 0.4;
-        mateNotes.push(`${mate.name} ${mate.code || 'OUT'} (official, ${mateAvg.toFixed(1)} ppg) — fewer than 2 games without him in the logs; scoring-share redistribution ${U.signed((f - 1) * 100, 0)}% PTS${missedRecent ? ' (absent from the last 3 games already, half weight)' : ''}`);
       }
+      for (const st of STATS) mateFx[st] = 1 + U.clamp(add[st], -0.15, 0.2);
+      minProj *= 1 + U.clamp(minAdd, -0.06, 0.1);
     }
     for (const t of mateNotes) notes.push({ k: 'inj', t });
 
@@ -421,7 +494,7 @@ const MODEL = (() => {
       const prior = minProj >= 30 ? 0.03 : minProj >= 24 ? 0.06 : minProj >= 16 ? 0.12 : 0.25;
       shortQ = U.clamp((nShort + 8 * prior) / (app.length + 8), 0.01, 0.6);
     }
-    return { proj, minProj, minBase, games, cur, notes, nEff, env, usage: usageInfo, fat, shortQ, l5min: U.mean(last5.map((r) => r.min)) };
+    return { proj, minProj, minBase, games: rawGames, cur: rawGames.filter((r) => r.season === ctx.season), notes, nEff, env, usage: usageInfo, fat, shortQ, l5min: U.mean(last5.map((r) => r.min)) };
   }
 
   function probAtLeast(stat, k, mu, variance) {
@@ -500,5 +573,5 @@ const MODEL = (() => {
     return { l5: hit(v.slice(0, 5)), l10: hit(v.slice(0, 10)), l20: hit(v.slice(0, 20)), season: hit(cur), streak: first ? streak : -streak, last: v.slice(0, 10), avg5: U.mean(v.slice(0, 5)), avg10: U.mean(v.slice(0, 10)) };
   }
 
-  return { driftOf, propAtLeast, teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
+  return { paceMin, remPace, QF, driftOf, propAtLeast, teamRate, segState, probAtLeast, priorVar, SIG, SIG_T, SEGS, mid, noVig, pregame, liveState, pHomeWin, marginDist, totalDist, lineProb, projectPlayer, propPregameProb, propLiveProb, hitHistory, statVal, LABEL, SHORT, COMBO, STATS };
 })();
