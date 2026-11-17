@@ -258,9 +258,58 @@ const INTEL = (() => {
     driftC = { at: Date.now(), season, d: MODEL.driftOf(all, season) };
     return driftC.d;
   }
+  // ---- self-calibration ----
+  // Every 10 minutes: re-project the last 14 days of every loaded rotation player from the games before each one
+  // (walk-forward), compare the model's P(stat ≥ line) with what happened, and fit a per-stat Platt map
+  // (logit p' = a + b·logit p, regularised toward no change). Real-data test: removes season-wide bias (2026-27
+  // to date: calibration error 1.97 → 0.80 pts) and stays neutral otherwise. Applied to pregame props.
+  const CAL_LAD = { pts: [10, 15, 20, 25, 30, 35], reb: [4, 6, 8, 10, 12], ast: [2, 4, 6, 8, 10], fg3m: [1, 2, 3, 4], pra: [15, 20, 25, 30, 35, 40, 45] };
+  let calC = { at: 0, season: 0, maps: null };
+  const lgt = (p) => Math.log(p / (1 - p)), sgm = (z) => 1 / (1 + Math.exp(-z));
+  function platt(rows) {
+    let a = 0, b = 1;
+    for (let it = 0; it < 25; it++) {
+      let ga = -50 * a, gb = -50 * (b - 1), haa = 50, hab = 0, hbb = 50;
+      for (const r of rows) { const x = lgt(r.p), q = sgm(a + b * x), e = r.o - q, w = q * (1 - q); ga += e; gb += e * x; haa += w; hab += w * x; hbb += w * x * x; }
+      const det = haa * hbb - hab * hab; if (Math.abs(det) < 1e-9) break;
+      const da = (hbb * ga - hab * gb) / det, db = (haa * gb - hab * ga) / det; a += da; b += db;
+      if (Math.abs(da) + Math.abs(db) < 1e-6) break;
+    }
+    return { a: U.clamp(a, -0.6, 0.6), b: U.clamp(b, 0.7, 1.3) };
+  }
+  function selfCal(season, force) {
+    let nPl = 0; for (const r of C.values()) nPl += r.players.size;
+    // refit every 10 minutes, or sooner once 50% more players have loaded since the last fit
+    if (!force && calC.season === season && Date.now() - calC.at < 10 * 60e3 && !(nPl > (calC.nPl || 0) * 1.5 && Date.now() - calC.at > 30e3)) return calC.maps;
+    calC = { at: Date.now(), season, nPl, maps: calC.season === season ? calC.maps : null };
+    const since = Date.now() - 14 * 864e5, drift = leagueDrift(season), rows = {};
+    for (const s in CAL_LAD) rows[s] = [];
+    for (const r of C.values()) for (const p of r.players.values()) {
+      const L = (p.logs || []).filter((x) => !x.post);
+      for (let t = 0; t < Math.min(L.length, 8); t++) {
+        const tg = L[t]; if (tg.date < since || !(tg.min > 0) || tg.season !== season) continue;
+        const hist = L.slice(t + 1); if (hist.filter((x) => x.min >= 4).length < 8) continue;
+        const pr = MODEL.projectPlayer(hist, { season, opp: tg.opp, home: tg.home, drift });
+        if (!pr || pr.minProj < 18) continue;
+        for (const s in CAL_LAD) for (const k of CAL_LAD[s]) { const q = MODEL.propAtLeast(pr, s, k); if (q > 0.05 && q < 0.95) rows[s].push({ p: q, o: MODEL.statVal(tg, s) >= k ? 1 : 0 }); }
+      }
+    }
+    const maps = {};
+    for (const s in rows) if (rows[s].length >= 600) { const m = platt(rows[s]); m.n = rows[s].length; m.bias = U.mean(rows[s].map((x) => x.p - x.o)); maps[s] = m; }
+    calC.maps = Object.keys(maps).length ? maps : null;
+    calC.counts = Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, v.length]));
+    return calC.maps;
+  }
+  // calibrated pregame probability for a stat (pr / pa use the PRA map, other stats pass through)
+  function calP(stat, p, season) {
+    const maps = calC.season === season ? calC.maps : null; if (!maps || p == null || !(p > 0 && p < 1)) return p;
+    const m = maps[stat === 'pr' || stat === 'pa' ? 'pra' : stat]; if (!m) return p;
+    return U.clamp(sgm(m.a + m.b * lgt(U.clamp(p, 0.002, 0.998))), 0.001, 0.999);
+  }
   function project(g, rec) {
     const season = U.seasonFor(g.dateKey);
     const drift = leagueDrift(season);
+    selfCal(season);
     rec.drift = drift;
     const pre = g.pre || MODEL.pregame(g, rec.summary, KALSHI.marketsFor(g.kkey));
     const pm = possModel(g);
@@ -335,5 +384,5 @@ const INTEL = (() => {
     };
   }
 
-  return { leagueDrift, newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
+  return { leagueDrift, selfCal, calP, calMaps: () => calC.maps, calInfo: () => ({ ...calC }), newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();

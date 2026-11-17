@@ -843,6 +843,8 @@ body.has-fab .fbody, body.has-fab .page { padding-bottom: 86px; }
 .cp-head { display: flex; justify-content: space-between; align-items: center; }
 .cp-head b { font: 600 17px/1 var(--f-display); letter-spacing: 0.03em; }
 .chipx.thin { color: #fff1b8; border-color: rgba(255, 201, 74, 0.6); background: rgba(255, 201, 74, 0.14); }
+.track { display: grid; gap: 2px; margin-top: 6px; padding: 7px 9px; border-radius: 7px; font-size: 12.5px; background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.1); }
+.track span { color: var(--ink-2); font-size: 12px; }
 
 </style>
 </head>
@@ -2879,9 +2881,58 @@ const INTEL = (() => {
     driftC = { at: Date.now(), season, d: MODEL.driftOf(all, season) };
     return driftC.d;
   }
+  // ---- self-calibration ----
+  // Every 10 minutes: re-project the last 14 days of every loaded rotation player from the games before each one
+  // (walk-forward), compare the model's P(stat ≥ line) with what happened, and fit a per-stat Platt map
+  // (logit p' = a + b·logit p, regularised toward no change). Real-data test: removes season-wide bias (2026-27
+  // to date: calibration error 1.97 → 0.80 pts) and stays neutral otherwise. Applied to pregame props.
+  const CAL_LAD = { pts: [10, 15, 20, 25, 30, 35], reb: [4, 6, 8, 10, 12], ast: [2, 4, 6, 8, 10], fg3m: [1, 2, 3, 4], pra: [15, 20, 25, 30, 35, 40, 45] };
+  let calC = { at: 0, season: 0, maps: null };
+  const lgt = (p) => Math.log(p / (1 - p)), sgm = (z) => 1 / (1 + Math.exp(-z));
+  function platt(rows) {
+    let a = 0, b = 1;
+    for (let it = 0; it < 25; it++) {
+      let ga = -50 * a, gb = -50 * (b - 1), haa = 50, hab = 0, hbb = 50;
+      for (const r of rows) { const x = lgt(r.p), q = sgm(a + b * x), e = r.o - q, w = q * (1 - q); ga += e; gb += e * x; haa += w; hab += w * x; hbb += w * x * x; }
+      const det = haa * hbb - hab * hab; if (Math.abs(det) < 1e-9) break;
+      const da = (hbb * ga - hab * gb) / det, db = (haa * gb - hab * ga) / det; a += da; b += db;
+      if (Math.abs(da) + Math.abs(db) < 1e-6) break;
+    }
+    return { a: U.clamp(a, -0.6, 0.6), b: U.clamp(b, 0.7, 1.3) };
+  }
+  function selfCal(season, force) {
+    let nPl = 0; for (const r of C.values()) nPl += r.players.size;
+    // refit every 10 minutes, or sooner once 50% more players have loaded since the last fit
+    if (!force && calC.season === season && Date.now() - calC.at < 10 * 60e3 && !(nPl > (calC.nPl || 0) * 1.5 && Date.now() - calC.at > 30e3)) return calC.maps;
+    calC = { at: Date.now(), season, nPl, maps: calC.season === season ? calC.maps : null };
+    const since = Date.now() - 14 * 864e5, drift = leagueDrift(season), rows = {};
+    for (const s in CAL_LAD) rows[s] = [];
+    for (const r of C.values()) for (const p of r.players.values()) {
+      const L = (p.logs || []).filter((x) => !x.post);
+      for (let t = 0; t < Math.min(L.length, 8); t++) {
+        const tg = L[t]; if (tg.date < since || !(tg.min > 0) || tg.season !== season) continue;
+        const hist = L.slice(t + 1); if (hist.filter((x) => x.min >= 4).length < 8) continue;
+        const pr = MODEL.projectPlayer(hist, { season, opp: tg.opp, home: tg.home, drift });
+        if (!pr || pr.minProj < 18) continue;
+        for (const s in CAL_LAD) for (const k of CAL_LAD[s]) { const q = MODEL.propAtLeast(pr, s, k); if (q > 0.05 && q < 0.95) rows[s].push({ p: q, o: MODEL.statVal(tg, s) >= k ? 1 : 0 }); }
+      }
+    }
+    const maps = {};
+    for (const s in rows) if (rows[s].length >= 600) { const m = platt(rows[s]); m.n = rows[s].length; m.bias = U.mean(rows[s].map((x) => x.p - x.o)); maps[s] = m; }
+    calC.maps = Object.keys(maps).length ? maps : null;
+    calC.counts = Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, v.length]));
+    return calC.maps;
+  }
+  // calibrated pregame probability for a stat (pr / pa use the PRA map, other stats pass through)
+  function calP(stat, p, season) {
+    const maps = calC.season === season ? calC.maps : null; if (!maps || p == null || !(p > 0 && p < 1)) return p;
+    const m = maps[stat === 'pr' || stat === 'pa' ? 'pra' : stat]; if (!m) return p;
+    return U.clamp(sgm(m.a + m.b * lgt(U.clamp(p, 0.002, 0.998))), 0.001, 0.999);
+  }
   function project(g, rec) {
     const season = U.seasonFor(g.dateKey);
     const drift = leagueDrift(season);
+    selfCal(season);
     rec.drift = drift;
     const pre = g.pre || MODEL.pregame(g, rec.summary, KALSHI.marketsFor(g.kkey));
     const pm = possModel(g);
@@ -2956,7 +3007,7 @@ const INTEL = (() => {
     };
   }
 
-  return { leagueDrift, newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
+  return { leagueDrift, selfCal, calP, calMaps: () => calC.maps, calInfo: () => ({ ...calC }), newsFlags, ensure, get, project, injuriesFor, statusFor, reportSummary, reportLoaded, fatigue, possModel, teamMetrics, PLAY_P, matchPlayer, teamAvgPts, posGroup };
 })();
 
 /* ---- scout.js ---- */
@@ -3358,7 +3409,7 @@ const PICKS = (() => {
         if (!(lb && (lb.min > 0 || lb.played)) && !p.st?.ok) { rejected.push({ m, reason: `ROSTER: ${p.st?.code || 'UNVERIFIED'}` }); continue; }
         if (!lb && !ls.pre && !ls.post) { pending.push(m); continue; } // waiting on the live box score
         if (lb && !ls.post) fp = MODEL.propLiveProb(p.proj, m.stat, m.th, lb, ls);
-        else if (ls.pre) fp = MODEL.propPregameProb(p.proj, m.stat, m.th);
+        else if (ls.pre) { fp = MODEL.propPregameProb(p.proj, m.stat, m.th); if (fp) fp = { ...fp, raw: fp.p, p: INTEL.calP(m.stat, fp.p, p.ctx?.season) }; }
         if (!fp) continue;
         if (fp.hit) continue;
         const nEff = p.proj.nEff;
@@ -3585,6 +3636,7 @@ const PICKS = (() => {
       } else {
         sec.arb.push(`No live Kalshi quote on this line: model ${P2(fp.p)} vs ${fp.liveBase ? 'pregame model' : 'season-average baseline'} ${P2(fp.base)}. Not edge-verified; buy only at ≤ $${p.maxEntry.toFixed(2)}.`);
       }
+      { const cm = INTEL.calMaps()?.[st === 'pr' || st === 'pa' ? 'pra' : st]; if (cm && fp.raw != null) sec.arb.push(`Self-calibration (last 14 days, ${cm.n} of the model's own ${S} calls on loaded players): it ran ${cm.bias >= 0 ? cm.bias * 100 > 0.5 ? (cm.bias * 100).toFixed(1) + ' pts high' : 'on target' : (-cm.bias * 100).toFixed(1) + ' pts low'} → ${P2(fp.raw)} adjusted to ${P2(fp.pModel ?? fp.p)}.`); }
       const hh = p.trend?.hh || MODEL.hitHistory(pr.games, st, k, cx.season);
       if (hh) sec.arb.push(`Trend audit at ${k}+: L5 ${hh.l5.h}/${hh.l5.n}, L10 ${hh.l10.h}/${hh.l10.n}, L20 ${hh.l20.h}/${hh.l20.n}; L10 avg ${f1(hh.avg10)} vs projection ${f1(prj.mu)} — ${prj.mu >= hh.avg10 * 0.95 ? 'no regression conflict' : 'projection below the trend (trend carries no weight)'}.`);
       if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after ${pl.name}'s stat moved ${p.lag.sinceScore}s ago; fair value shifted ${U.signed(p.lag.move * 100, 1)} pts.`);
@@ -3694,7 +3746,7 @@ const PICKS = (() => {
       else if (pl?.proj && k != null) {
         const fp = lb ? MODEL.propLiveProb(pl.proj, md.stat, th, lb, ls) : ls.pre ? MODEL.propPregameProb(pl.proj, md.stat, th) : null;
         if (fp) {
-          pY = fp.p * (lb ? 1 : (INTEL.PLAY_P[pl.st?.code] ?? 1));
+          pY = (lb ? fp.p : INTEL.calP(md.stat, fp.p, pl.ctx?.season)) * (lb ? 1 : (INTEL.PLAY_P[pl.st?.code] ?? 1));
           note = lb ? `${nm} ${cur}/${k} ${S} — needs ${k - cur} more in ~${Math.max(0, fp.r).toFixed(0)} min${fp.notes?.length ? ' · ' + fp.notes.join(', ') : ''}` : `${nm} projects ${fp.mu != null ? fp.mu.toFixed(1) : '—'} ${S} (needs ${k})${pl.st?.code && pl.st.code !== 'ACTIVE' ? ' · ' + pl.st.code : ''}`;
         } else note = 'Waiting for the live box score';
       } else note = pl ? 'Loading game logs' : 'Loading player data';
@@ -3847,7 +3899,7 @@ const PARLAY = (() => {
     const k = `${pa.toFixed(4)}|${pb.toFixed(4)}|${r.toFixed(3)}`;
     if (memo.has(k)) return memo.get(k);
     const v = bvn(U.normInv(pa), U.normInv(pb), r);
-    if (memo.size > 5000) memo.clear();
+    if (memo.size > 50000) memo.clear();
     memo.set(k, v);
     return v;
   };
@@ -3863,7 +3915,22 @@ const PARLAY = (() => {
     else if (p.kind === 'ot') L.over = p.yes;
     return L;
   }
-  const PTS_LIKE = { pts: 1, pra: 1, pa: 0.9, pr: 0.85, ast: 0.6, fg3m: 0.6, reb: 0.4, ra: 0.5, stl: 0.2, blk: 0.2 };
+  // ---- measured correlations ----
+  // Latent (copula) correlations between same-game leg outcomes, fitted by maximum likelihood on ~80,000 real
+  // leg pairs from 2025-26 games (walk-forward projections, real box scores) and checked on 2026-27.
+  // Cross-player props are close to independent; a player's line moves with his team's total and result; the
+  // same player's stats move together very unevenly (points ↔ threes 0.70, assists ↔ PRA only 0.40).
+  const SK = (s) => (s === 'pr' || s === 'pa' ? 'pra' : s === 'ra' ? 'reb' : ['pts', 'reb', 'ast', 'fg3m', 'pra'].includes(s) ? s : 'oth');
+  const pairKey = (x, y) => [SK(x), SK(y)].sort().join('-');
+  const R_TEAM = { 'pts-pts': 0, 'pra-pra': 0.05, 'pra-pts': 0, 'fg3m-pts': 0, 'fg3m-pra': 0, 'fg3m-fg3m': 0.07, 'ast-pts': 0.09, 'ast-pra': 0.1, 'ast-fg3m': 0.05, 'ast-ast': 0.06, 'ast-reb': 0.03, 'pts-reb': 0, 'pra-reb': 0, 'fg3m-reb': -0.03, 'reb-reb': 0 };
+  const R_OPP = { 'pts-pts': 0.05, 'pra-pra': 0.02, 'pra-pts': 0.02, 'ast-pts': 0.07, 'ast-pra': 0.02, 'ast-ast': 0.07, 'reb-reb': -0.07, 'pts-reb': 0.02, 'pra-reb': 0, 'ast-reb': 0, 'fg3m-pts': 0.03, 'fg3m-pra': 0.04, 'fg3m-fg3m': 0, 'ast-fg3m': 0, 'fg3m-reb': 0.02 };
+  const R_SAME = { 'pra-pts': 0.78, 'pra-reb': 0.62, 'ast-pra': 0.4, 'fg3m-pts': 0.7, 'fg3m-pra': 0.6, 'pts-reb': 0.25, 'ast-pts': 0.2, 'ast-reb': 0.2, 'ast-fg3m': 0.12, 'fg3m-reb': 0.05 };
+  const R_GAME_TOT = { pts: 0.23, pra: 0.27, ast: 0.17, fg3m: 0.15, reb: 0.08, oth: 0.05 };
+  const R_OWN_TT = { pts: 0.26, pra: 0.28, ast: 0.27, fg3m: 0.19, reb: 0.1, oth: 0.05 };
+  const R_OPP_TT = { pts: 0.07, pra: 0.07, ast: 0.07, fg3m: 0.04, reb: 0, oth: 0 };
+  const R_OWN_WIN = { pts: 0.14, pra: 0.16, ast: 0.06, fg3m: 0.05, reb: 0.07, oth: 0.03 };
+  const R_OPP_WIN = { pts: -0.1, pra: -0.15, ast: -0.1, fg3m: -0.08, reb: -0.04, oth: -0.03 };
+  const sameR = (x, y) => R_SAME[pairKey(x, y)] ?? 0.2;
   // correlation between the two legs' success events; null = barred pairing; reason string for the report
   function rho(a, b) {
     if (a.gameId !== b.gameId) return { r: 0, why: 'separate games — independent' };
@@ -3871,24 +3938,23 @@ const PARLAY = (() => {
     const seg = a.seg || b.seg ? 0.5 : 1;
     if (a.fam === 'prop' && b.fam === 'prop') {
       if (a.player === b.player) return null; // same player stacking: redundant exposure
+      const k = pairKey(a.stat, b.stat);
       if (a.team === b.team) {
-        if ((a.stat === 'ast' && /pts|pra|pa|fg3m/.test(b.stat)) || (b.stat === 'ast' && /pts|pra|pa|fg3m/.test(a.stat))) return { r: 0.12, why: 'teammate assist ↔ teammate scoring share the same made baskets' };
-        if (a.stat === 'reb' && b.stat === 'reb') return { r: -0.06, why: 'teammates compete for the same rebounds' };
-        if (/pts|pra/.test(a.stat) && /pts|pra/.test(b.stat)) return { r: -0.05, why: 'teammates compete for the same shot volume' };
-        return { r: 0.02, why: 'teammates — shared minutes environment' };
+        const r = R_TEAM[k] ?? 0.02;
+        return { r, why: r >= 0.05 ? 'teammate assists and teammate scoring come from the same made baskets (measured +' + r.toFixed(2) + ')' : r < 0 ? 'teammates compete for the same rebounds / shots (measured ' + r.toFixed(2) + ')' : 'teammates — measured almost independent' };
       }
-      if (/pts|pra|pa|fg3m/.test(a.stat) && /pts|pra|pa|fg3m/.test(b.stat)) return { r: 0.06, why: 'opposing scorers share the possession count' };
-      return { r: 0.03, why: 'opposing players share the possession count' };
+      const r = R_OPP[k] ?? 0.02;
+      return { r, why: r < 0 ? 'opposing players fight for the same rebounds (measured ' + r.toFixed(2) + ')' : 'opposing players — measured almost independent (shared pace only)' };
     }
     const prop = a.fam === 'prop' ? a : b.fam === 'prop' ? b : null, line = prop === a ? b : a;
     if (prop) {
-      const w = PTS_LIKE[prop.stat] ?? 0.4;
-      if (line.kind === 'total') return { r: (line.over ? 0.25 : -0.25) * w * seg, why: line.over ? `game Over and ${prop.name} ${MODEL.SHORT[prop.stat]} both scale with possessions and scoring efficiency` : `game Under suppresses ${prop.name}'s volume (counter-acting script)` };
-      if (line.kind === 'teamtotal') return { r: (line.team === prop.team ? (line.over ? 0.35 : -0.35) : (line.over ? 0.05 : -0.05)) * w * seg, why: line.team === prop.team ? `${prop.name} is a direct component of the team total` : 'opponent team total — pace link only' };
+      const s0 = SK(prop.stat), nm = prop.name, S = MODEL.SHORT[prop.stat] || prop.stat;
+      if (line.kind === 'total') { const r = R_GAME_TOT[s0] * seg; return { r: line.over ? r : -r, why: line.over ? `a high-scoring game lifts ${nm}'s ${S} (measured +${r.toFixed(2)})` : `a low-scoring game drags ${nm}'s ${S} down (measured −${r.toFixed(2)})` }; }
+      if (line.kind === 'teamtotal') { const own = line.team === prop.team, r = (own ? R_OWN_TT : R_OPP_TT)[s0] * seg; return { r: line.over ? r : -r, why: own ? `${nm} is part of his team's total (measured ${line.over ? '+' : '−'}${r.toFixed(2)})` : `opponent's total — pace link only (measured ${line.over ? '+' : '−'}${r.toFixed(2)})` }; }
       if (line.kind === 'ot') return { r: line.over ? 0.05 : 0, why: 'overtime adds 5 minutes of volume' };
       // team side (ml / spread / margin)
-      const r = (line.team === prop.team ? 0.12 : -0.08) * w * seg;
-      return { r, why: line.team === prop.team ? `${prop.name}'s production feeds his team's margin` : `${prop.name} plays for the side the line is against (counter-acting script)` };
+      const own = line.team === prop.team, r = (own ? R_OWN_WIN : R_OPP_WIN)[s0] * seg;
+      return { r, why: own ? `${nm}'s big nights and his team's wins go together (measured +${r.toFixed(2)})` : `${nm} plays for the team this line bets against (measured ${r.toFixed(2)})` };
     }
     // two game lines in the same game
     const sides = (x) => ['ml', 'spread', 'margin'].includes(x.kind);
@@ -3965,8 +4031,8 @@ const PARLAY = (() => {
     const S = (x) => MODEL.SHORT[x] || x;
     if (a.fam === 'prop' && b.fam === 'prop' && a.player === b.player) {
       if (a.stat === b.stat) return { r: 0.97, flag: 'nested', why: `two lines on ${a.name}’s ${S(a.stat)} — the higher line already includes the lower one` };
-      const inC = (x, y) => (MODEL.COMBO[x] || []).includes(y) || (MODEL.COMBO[x] && MODEL.COMBO[y] && MODEL.COMBO[x].some((k) => MODEL.COMBO[y].includes(k)));
-      return { r: inC(a.stat, b.stat) || inC(b.stat, a.stat) ? 0.7 : 0.3, flag: 'same-player', why: `both need a big night from ${a.name} — one cold game or early exit sinks both` };
+      const r = sameR(a.stat, b.stat);
+      return { r, flag: 'same-player', why: `both need a big night from ${a.name} (measured link ${r.toFixed(2)}) — one cold game or early exit sinks both` };
     }
     const ov = overlap(a, b), sides = (x) => ['ml', 'spread', 'margin'].includes(x.kind), tot = (x) => x.kind === 'total' || x.kind === 'teamtotal';
     if (sides(a) && sides(b)) {
@@ -4088,7 +4154,7 @@ const PARLAY = (() => {
     const stress = `Roster verification — ${inj}. Fatigue — ${fat}. Minimum single-leg edge ${legs.some((l) => l.p.netEdge == null) ? 'n/a (a leg has no price)' : U.signed(Math.min(...legs.map((l) => l.p.netEdge)) * 100, 2) + '%'}; minimum pairwise ρ ${c.minR >= 0 ? '+' : ''}${c.minR.toFixed(2)} (no counter-acting scripts). Allocation carries a ${legs.length === 3 ? '0.70' : '0.85'} multi-leg variance haircut.`;
     return [{ k: 'syn', title: 'COMPOUND EDGE SYNERGY', t: synergy }, { k: 'script', title: 'GAME SCRIPT & PACING CROSS-CORRELATION', t: script }, { k: 'stress', title: 'COMPOUNDING STRESS-TEST DEFENSE', t: stress }];
   }
-  return { build, report, toAm, rho, bvn, joint2, jointN, relation, metrics, legOf, haircutN, growthOf };
+  return { build, report, toAm, rho, bvn, joint2, jointN, relation, metrics, legOf, haircutN, growthOf, evalCombo };
 })();
 
 /* ---- court.js ---- */
@@ -6257,7 +6323,7 @@ const UI = (() => {
         <details class="pane fold notes"><summary><h3><span class="ico i-notes"></span>Risk protocol</h3></summary>
           <p><b>Phase 1 — roster air-gap.</b> Injury status comes only from the official game-day report (ESPN); ESPN team news can only bench a player (never activate one). Players not listed are fully active; a player in tonight's live box score is active. Teammate usage shifts apply only to OUT (1.00) and DOUBTFUL (0.75). Own-prop DNP risk: QUESTIONABLE 18%, PROBABLE 3%.</p>
           <p><b>Phase 2 — stress tests.</b> Possessions = home pace (home games) × away pace (road games) ÷ league, from each team's recent box scores. Volume scales to tonight's possessions; efficiency to the opponent's points allowed per 100 possessions, defense-vs-position, shot-zone and shot-type defense, and transition defense (each shrunk toward league by sample size); all blended 50/50 with the market-implied team total. Usage (FGA + 0.44·FTA + TOV)/min with/without each OUT teammate; minutes ramps after absences and role changes inferred from logs; news-reported minute limits and starting-role changes applied. Fatigue: back-to-back, 3-in-4, road stretches, time zones, altitude. Market read: every ladder (a player's 20+/25+/30+, a total's lines, a team's spread lines) gets one always-decreasing Kalshi curve fitted to its quotes by liquidity, and one model weight for the whole ladder, so probabilities can never run backwards; pregame quarters/halves lean 70% on that curve. Scoring by quarter uses real shares (Q4 is the slowest). Gates: net edge ≥ +4.00%, true probability ≥ 30% (or edge ≥ +10 and ROI ≥ +60%), trend sanitization, prices ≤ 10 min old; a thin book (spread > 12¢ or no bid) survives only when the liquid lines of its own ladder value it above the ask and the edge is ≥ +6%; MARKET CONFLICT blocks any ladder where the model and a liquid Kalshi ladder differ by more than 22 points. Teammate absences use same-season with/without splits, count only what his recent games don't already reflect, and add (never multiply) with caps. Player props are overs only.</p>
-          <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlay legs are Section 1 survivors at least as likely as your Min hit setting; a ticket must clear +4.00 pts compound edge, hit at least 1.18× as often as its price implies, stay +EV with correlation removed, and hit at least 25% (two legs) or 14% (three legs). Tickets mix props with game lines when both exist, bar negative or redundant correlations (Gaussian copula with Monte Carlo pricing), rank by compound edge, and every bet family (all rungs of one ladder) appears on one ticket only. The combo price shown is the product of the live leg asks; Kalshi's own combo quote can differ. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
+          <p><b>Phase 3 — sizing.</b> ¼-Kelly % of bankroll = 25% of the full Kelly stake (props/lines), × 0.85 (two-leg) or × 0.70 (three-leg) for parlays. Parlay legs are Section 1 survivors at least as likely as your Min hit setting; how legs win together is measured, not assumed (fitted on ~80,000 real same-game leg pairs: different players are close to independent, a player's over rises with his team's total and wins and falls when the other team wins); pregame props are re-checked against the model's own last 14 days of calls and recalibrated per stat; a ticket must clear +4.00 pts compound edge, hit at least 1.18× as often as its price implies, stay +EV with correlation removed, and hit at least 25% (two legs) or 14% (three legs). Tickets mix props with game lines when both exist, bar negative or redundant correlations (Gaussian copula with Monte Carlo pricing), rank by compound edge, and every bet family (all rungs of one ladder) appears on one ticket only. The combo price shown is the product of the live leg asks; Kalshi's own combo quote can differ. Prices are Kalshi's; Robinhood can differ. The Kalshi taker fee 0.07·P·(1−P) is included in EV.</p></details>
         <div id="fKnote" class="kfoot"></div>
       </div></div>`;
     el.hidden = false;
@@ -6917,14 +6983,14 @@ const MYB = (() => {
     if (kind === 'add') {
       if (price == null) { wrap.classList.remove('err'); void wrap.offsetWidth; wrap.classList.add('err'); $('#popHint').textContent = 'Type the price per contract in cents, e.g. 42 or 14.2'; return; }
       if (o.mode === 'complete') {
-        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, legs: slip.map((L) => ({ ...L, last: null })) });
+        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, p0: slipNow(true)?.p ?? null, legs: slip.map((L) => ({ ...L, last: null })) });
         slip = []; saveSlip(); closeSheet();
         toast('Parlay added to My Bets');
       } else if (o.legs.length > 1) {
-        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, pxId: o.pxId || null, legs: o.legs.map((L) => ({ ...L, paid: L.ask0 })) });
+        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, pxId: o.pxId || null, p0: evalTicket(o.legs).p ?? null, legs: o.legs.map((L) => ({ ...L, paid: L.ask0 })) });
         toast('Parlay added to My Bets');
       } else {
-        bets.unshift({ id: uid(), type: 'single', at: Date.now(), paid: price, legs: [{ ...o.legs[0], paid: price }] });
+        bets.unshift({ id: uid(), type: 'single', at: Date.now(), paid: price, p0: evalLeg(o.legs[0]).p ?? o.legs[0].fair0 ?? null, legs: [{ ...o.legs[0], paid: price }] });
         toast('Added to My Bets');
       }
       save();
@@ -7185,6 +7251,7 @@ const MYB = (() => {
     if (cur && cur.p < 0.1 && n >= 2) B.push({ c: 'warn', t: `Long shot: it cashes about 1 in ${Math.max(2, Math.round(1 / Math.max(cur.p, 0.001)))} tries. Even with an edge, expect long losing streaks — keep the stake small.` });
     if (n >= 5) B.push({ c: 'warn', t: `${n} legs: every extra leg multiplies the risk — one bad bounce sinks the whole ticket.` });
     if (cur && cur.kelly > 0) B.push({ c: 'tip', t: `Bet size: about ${(cur.kelly * 100).toFixed(2)}% of your bankroll (¼-Kelly with a ${n}-leg haircut).` });
+    if (cur && n >= 2 && Math.pow(1 - cur.p, 5) >= 0.05) B.push({ c: 'tip', t: `Expect cold runs: at ${P2(cur.p)} this ticket loses 5 in a row about ${Math.round(Math.pow(1 - cur.p, 5) * 100)}% of the time even when the edge is real — keep each stake small enough that a streak doesn't hurt.` });
     if (cur && cur.ask != null && !adds.length && liveIdx.length >= 2 && cur.edge > 0) B.push({ c: 'good', t: 'No single add makes this stronger — it’s at its best size.' });
     return (anCache = { t, cur, B, adds: adds.slice(0, 3) });
   }
@@ -7259,6 +7326,23 @@ const MYB = (() => {
     const L = b.legs[0], e = R.ev[0];
     return `<div class="pk-h">${avatarFor(L, e, hold)}<span class="pk-t"><b>${U.esc(L.who)}</b><small>${U.esc(L.sel)} · ${U.esc(L.away)}@${U.esc(L.home)}${e.clock ? ' · ' + U.esc(e.clock) : ''}</small></span>${pill}</div>${row}${sell}${e.note ? `<p class="bnote ${st}">${U.esc(e.note)}</p>` : ''}${foot}`;
   }
+  // ---- track record: results vs what the model expected when each bet was placed ----
+  // P(this few wins or fewer) under the model's own probabilities (Poisson-binomial), so a cold run can be read
+  // honestly: ordinary variance, or a sign the model is wrong.
+  function trackHTML(R) {
+    const done = R.filter((x) => x.R.status === 'hit' || x.R.status === 'lost').map(({ b, R: r }) => {
+      const p = b.p0 ?? (b.type === 'parlay' ? b.legs.reduce((a, L) => a * (L.fair0 ?? 0.5), 1) : b.legs[0].fair0 ?? null);
+      return { p: p == null ? null : U.clamp(p, 0.01, 0.99), win: r.status === 'hit', paid: b.paid, parlay: b.type === 'parlay' };
+    }).filter((x) => x.p != null);
+    if (!done.length) return '';
+    const wins = done.filter((x) => x.win).length, exp = done.reduce((a, x) => a + x.p, 0);
+    // distribution of wins
+    let dist = [1]; for (const x of done) { const nd = new Array(dist.length + 1).fill(0); dist.forEach((v, k) => { nd[k] += v * (1 - x.p); nd[k + 1] += v * x.p; }); dist = nd; }
+    const tail = dist.slice(0, wins + 1).reduce((a, v) => a + v, 0);
+    const pnl = done.reduce((a, x) => a + (x.win ? 1 - x.paid : -x.paid), 0), spent = done.reduce((a, x) => a + x.paid, 0);
+    const verdict = tail >= 0.1 ? 'ordinary variance' : tail >= 0.02 ? 'a cold run — keep stakes small and watch the next 10' : 'worse than the model can explain — treat its numbers with caution';
+    return `<div class="track"><b>Track record</b> ${done.length} settled · ${wins} won vs ${exp.toFixed(1)} expected · ${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(2)} per contract set (${U.signed(spent ? pnl / spent * 100 : 0, 0)}%)<span>Chance of ${wins} or fewer wins with these probabilities: <b>${(tail * 100).toFixed(0)}%</b> — ${verdict}.</span></div>`;
+  }
   let lastRender = 0;
   function render(force) {
     if (view !== 'bets') return;
@@ -7280,7 +7364,7 @@ const MYB = (() => {
     const rank = (x) => (x.R.sell ? 0 : !x.b.done ? 1 : 2);
     R.sort((a, c) => rank(a) - rank(c) || (a.b.done ? (c.b.legs[0].last?.at || c.b.at) - (a.b.legs[0].last?.at || a.b.at) : c.b.at - a.b.at));
     const open = R.filter((x) => !x.b.done), won = R.filter((x) => x.R.status === 'hit').length, lost = R.filter((x) => x.R.status === 'lost').length, sells = R.filter((x) => x.R.sell).length;
-    $('#betsSum', box).innerHTML = `<b>${open.length}</b> open · <b class="pos">${won}</b> won · <b class="neg">${lost}</b> lost${sells ? ` · <b class="sellc">${sells} SELL NOW</b>` : ''}<small>Live prices refresh every second · positions are saved on this device</small>`;
+    $('#betsSum', box).innerHTML = `<b>${open.length}</b> open · <b class="pos">${won}</b> won · <b class="neg">${lost}</b> lost${sells ? ` · <b class="sellc">${sells} SELL NOW</b>` : ''}${trackHTML(R)}<small>Live prices refresh every second · positions are saved on this device</small>`;
     const keep = new Set();
     for (const { b, R: r } of R) {
       keep.add(b.id);

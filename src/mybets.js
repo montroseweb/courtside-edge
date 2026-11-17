@@ -141,14 +141,14 @@ const MYB = (() => {
     if (kind === 'add') {
       if (price == null) { wrap.classList.remove('err'); void wrap.offsetWidth; wrap.classList.add('err'); $('#popHint').textContent = 'Type the price per contract in cents, e.g. 42 or 14.2'; return; }
       if (o.mode === 'complete') {
-        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, legs: slip.map((L) => ({ ...L, last: null })) });
+        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, p0: slipNow(true)?.p ?? null, legs: slip.map((L) => ({ ...L, last: null })) });
         slip = []; saveSlip(); closeSheet();
         toast('Parlay added to My Bets');
       } else if (o.legs.length > 1) {
-        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, pxId: o.pxId || null, legs: o.legs.map((L) => ({ ...L, paid: L.ask0 })) });
+        bets.unshift({ id: uid(), type: 'parlay', at: Date.now(), paid: price, pxId: o.pxId || null, p0: evalTicket(o.legs).p ?? null, legs: o.legs.map((L) => ({ ...L, paid: L.ask0 })) });
         toast('Parlay added to My Bets');
       } else {
-        bets.unshift({ id: uid(), type: 'single', at: Date.now(), paid: price, legs: [{ ...o.legs[0], paid: price }] });
+        bets.unshift({ id: uid(), type: 'single', at: Date.now(), paid: price, p0: evalLeg(o.legs[0]).p ?? o.legs[0].fair0 ?? null, legs: [{ ...o.legs[0], paid: price }] });
         toast('Added to My Bets');
       }
       save();
@@ -409,6 +409,7 @@ const MYB = (() => {
     if (cur && cur.p < 0.1 && n >= 2) B.push({ c: 'warn', t: `Long shot: it cashes about 1 in ${Math.max(2, Math.round(1 / Math.max(cur.p, 0.001)))} tries. Even with an edge, expect long losing streaks — keep the stake small.` });
     if (n >= 5) B.push({ c: 'warn', t: `${n} legs: every extra leg multiplies the risk — one bad bounce sinks the whole ticket.` });
     if (cur && cur.kelly > 0) B.push({ c: 'tip', t: `Bet size: about ${(cur.kelly * 100).toFixed(2)}% of your bankroll (¼-Kelly with a ${n}-leg haircut).` });
+    if (cur && n >= 2 && Math.pow(1 - cur.p, 5) >= 0.05) B.push({ c: 'tip', t: `Expect cold runs: at ${P2(cur.p)} this ticket loses 5 in a row about ${Math.round(Math.pow(1 - cur.p, 5) * 100)}% of the time even when the edge is real — keep each stake small enough that a streak doesn't hurt.` });
     if (cur && cur.ask != null && !adds.length && liveIdx.length >= 2 && cur.edge > 0) B.push({ c: 'good', t: 'No single add makes this stronger — it’s at its best size.' });
     return (anCache = { t, cur, B, adds: adds.slice(0, 3) });
   }
@@ -483,6 +484,23 @@ const MYB = (() => {
     const L = b.legs[0], e = R.ev[0];
     return `<div class="pk-h">${avatarFor(L, e, hold)}<span class="pk-t"><b>${U.esc(L.who)}</b><small>${U.esc(L.sel)} · ${U.esc(L.away)}@${U.esc(L.home)}${e.clock ? ' · ' + U.esc(e.clock) : ''}</small></span>${pill}</div>${row}${sell}${e.note ? `<p class="bnote ${st}">${U.esc(e.note)}</p>` : ''}${foot}`;
   }
+  // ---- track record: results vs what the model expected when each bet was placed ----
+  // P(this few wins or fewer) under the model's own probabilities (Poisson-binomial), so a cold run can be read
+  // honestly: ordinary variance, or a sign the model is wrong.
+  function trackHTML(R) {
+    const done = R.filter((x) => x.R.status === 'hit' || x.R.status === 'lost').map(({ b, R: r }) => {
+      const p = b.p0 ?? (b.type === 'parlay' ? b.legs.reduce((a, L) => a * (L.fair0 ?? 0.5), 1) : b.legs[0].fair0 ?? null);
+      return { p: p == null ? null : U.clamp(p, 0.01, 0.99), win: r.status === 'hit', paid: b.paid, parlay: b.type === 'parlay' };
+    }).filter((x) => x.p != null);
+    if (!done.length) return '';
+    const wins = done.filter((x) => x.win).length, exp = done.reduce((a, x) => a + x.p, 0);
+    // distribution of wins
+    let dist = [1]; for (const x of done) { const nd = new Array(dist.length + 1).fill(0); dist.forEach((v, k) => { nd[k] += v * (1 - x.p); nd[k + 1] += v * x.p; }); dist = nd; }
+    const tail = dist.slice(0, wins + 1).reduce((a, v) => a + v, 0);
+    const pnl = done.reduce((a, x) => a + (x.win ? 1 - x.paid : -x.paid), 0), spent = done.reduce((a, x) => a + x.paid, 0);
+    const verdict = tail >= 0.1 ? 'ordinary variance' : tail >= 0.02 ? 'a cold run — keep stakes small and watch the next 10' : 'worse than the model can explain — treat its numbers with caution';
+    return `<div class="track"><b>Track record</b> ${done.length} settled · ${wins} won vs ${exp.toFixed(1)} expected · ${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(2)} per contract set (${U.signed(spent ? pnl / spent * 100 : 0, 0)}%)<span>Chance of ${wins} or fewer wins with these probabilities: <b>${(tail * 100).toFixed(0)}%</b> — ${verdict}.</span></div>`;
+  }
   let lastRender = 0;
   function render(force) {
     if (view !== 'bets') return;
@@ -504,7 +522,7 @@ const MYB = (() => {
     const rank = (x) => (x.R.sell ? 0 : !x.b.done ? 1 : 2);
     R.sort((a, c) => rank(a) - rank(c) || (a.b.done ? (c.b.legs[0].last?.at || c.b.at) - (a.b.legs[0].last?.at || a.b.at) : c.b.at - a.b.at));
     const open = R.filter((x) => !x.b.done), won = R.filter((x) => x.R.status === 'hit').length, lost = R.filter((x) => x.R.status === 'lost').length, sells = R.filter((x) => x.R.sell).length;
-    $('#betsSum', box).innerHTML = `<b>${open.length}</b> open · <b class="pos">${won}</b> won · <b class="neg">${lost}</b> lost${sells ? ` · <b class="sellc">${sells} SELL NOW</b>` : ''}<small>Live prices refresh every second · positions are saved on this device</small>`;
+    $('#betsSum', box).innerHTML = `<b>${open.length}</b> open · <b class="pos">${won}</b> won · <b class="neg">${lost}</b> lost${sells ? ` · <b class="sellc">${sells} SELL NOW</b>` : ''}${trackHTML(R)}<small>Live prices refresh every second · positions are saved on this device</small>`;
     const keep = new Set();
     for (const { b, R: r } of R) {
       keep.add(b.id);

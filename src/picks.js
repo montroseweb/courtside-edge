@@ -196,7 +196,7 @@ const PICKS = (() => {
         if (!(lb && (lb.min > 0 || lb.played)) && !p.st?.ok) { rejected.push({ m, reason: `ROSTER: ${p.st?.code || 'UNVERIFIED'}` }); continue; }
         if (!lb && !ls.pre && !ls.post) { pending.push(m); continue; } // waiting on the live box score
         if (lb && !ls.post) fp = MODEL.propLiveProb(p.proj, m.stat, m.th, lb, ls);
-        else if (ls.pre) fp = MODEL.propPregameProb(p.proj, m.stat, m.th);
+        else if (ls.pre) { fp = MODEL.propPregameProb(p.proj, m.stat, m.th); if (fp) fp = { ...fp, raw: fp.p, p: INTEL.calP(m.stat, fp.p, p.ctx?.season) }; }
         if (!fp) continue;
         if (fp.hit) continue;
         const nEff = p.proj.nEff;
@@ -423,6 +423,7 @@ const PICKS = (() => {
       } else {
         sec.arb.push(`No live Kalshi quote on this line: model ${P2(fp.p)} vs ${fp.liveBase ? 'pregame model' : 'season-average baseline'} ${P2(fp.base)}. Not edge-verified; buy only at ≤ $${p.maxEntry.toFixed(2)}.`);
       }
+      { const cm = INTEL.calMaps()?.[st === 'pr' || st === 'pa' ? 'pra' : st]; if (cm && fp.raw != null) sec.arb.push(`Self-calibration (last 14 days, ${cm.n} of the model's own ${S} calls on loaded players): it ran ${cm.bias >= 0 ? cm.bias * 100 > 0.5 ? (cm.bias * 100).toFixed(1) + ' pts high' : 'on target' : (-cm.bias * 100).toFixed(1) + ' pts low'} → ${P2(fp.raw)} adjusted to ${P2(fp.pModel ?? fp.p)}.`); }
       const hh = p.trend?.hh || MODEL.hitHistory(pr.games, st, k, cx.season);
       if (hh) sec.arb.push(`Trend audit at ${k}+: L5 ${hh.l5.h}/${hh.l5.n}, L10 ${hh.l10.h}/${hh.l10.n}, L20 ${hh.l20.h}/${hh.l20.n}; L10 avg ${f1(hh.avg10)} vs projection ${f1(prj.mu)} — ${prj.mu >= hh.avg10 * 0.95 ? 'no regression conflict' : 'projection below the trend (trend carries no weight)'}.`);
       if (p.lag) sec.arb.push(`Stale quote: unchanged ${p.lag.sec}s after ${pl.name}'s stat moved ${p.lag.sinceScore}s ago; fair value shifted ${U.signed(p.lag.move * 100, 1)} pts.`);
@@ -532,7 +533,7 @@ const PICKS = (() => {
       else if (pl?.proj && k != null) {
         const fp = lb ? MODEL.propLiveProb(pl.proj, md.stat, th, lb, ls) : ls.pre ? MODEL.propPregameProb(pl.proj, md.stat, th) : null;
         if (fp) {
-          pY = fp.p * (lb ? 1 : (INTEL.PLAY_P[pl.st?.code] ?? 1));
+          pY = (lb ? fp.p : INTEL.calP(md.stat, fp.p, pl.ctx?.season)) * (lb ? 1 : (INTEL.PLAY_P[pl.st?.code] ?? 1));
           note = lb ? `${nm} ${cur}/${k} ${S} — needs ${k - cur} more in ~${Math.max(0, fp.r).toFixed(0)} min${fp.notes?.length ? ' · ' + fp.notes.join(', ') : ''}` : `${nm} projects ${fp.mu != null ? fp.mu.toFixed(1) : '—'} ${S} (needs ${k})${pl.st?.code && pl.st.code !== 'ACTIVE' ? ' · ' + pl.st.code : ''}`;
         } else note = 'Waiting for the live box score';
       } else note = pl ? 'Loading game logs' : 'Loading player data';

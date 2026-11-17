@@ -150,6 +150,24 @@ Run against live ESPN data and the live Kalshi feed before shipping:
 
 Survivors went from 489 to 100 on the same slate — the removed ones were the fabricated edges above.
 
+### Parlays on real games (Nov 17)
+
+Checked on real same-game leg pairs built from walk-forward projections and real box scores:
+- **Single legs since Nov 9 (never seen in tuning):** 55% calls hit 56%, 65% → 62%, 75% → 73%,
+  85% → 84%.
+- **Correlations were hand-set; now measured** by maximum likelihood on ~80,000 pairs from 2025-26
+  and checked on 2026-27 (joint log loss improves). Biggest corrections: a player's over vs the
+  *opponent* winning −0.15 (was −0.05); same-player points ↔ threes 0.70 (was 0.30) and assists ↔ PRA
+  0.40 (was 0.70); teammates' PRA +0.05 (was −0.05).
+- **Parlay overconfidence this season** came from the legs, not the links: two-leg prop parlays
+  predicted 33.0% hit 30.4% because points/PRA overs ran a couple of points high early in the
+  season. Pregame props now self-calibrate: every 10 minutes the app re-projects the last 14 days of
+  every loaded rotation player (walk-forward), compares its calls with what happened and fits a
+  per-stat correction (needs 600+ calls; regularised toward no change). On real data this removes
+  season-wide bias (2026-27 calibration error 1.97 → 0.80 pts) and is neutral otherwise.
+- **Track record (My Bets):** settled bets vs the probability the model gave when each was placed,
+  with the chance of a run that bad — ordinary variance vs a model warning.
+
 ## Lines you choose
 
 Every prop, spread, total and team total card has a line stepper (− / +) and chips for the lines

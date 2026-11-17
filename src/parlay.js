@@ -28,7 +28,7 @@ const PARLAY = (() => {
     const k = `${pa.toFixed(4)}|${pb.toFixed(4)}|${r.toFixed(3)}`;
     if (memo.has(k)) return memo.get(k);
     const v = bvn(U.normInv(pa), U.normInv(pb), r);
-    if (memo.size > 5000) memo.clear();
+    if (memo.size > 50000) memo.clear();
     memo.set(k, v);
     return v;
   };
@@ -44,7 +44,22 @@ const PARLAY = (() => {
     else if (p.kind === 'ot') L.over = p.yes;
     return L;
   }
-  const PTS_LIKE = { pts: 1, pra: 1, pa: 0.9, pr: 0.85, ast: 0.6, fg3m: 0.6, reb: 0.4, ra: 0.5, stl: 0.2, blk: 0.2 };
+  // ---- measured correlations ----
+  // Latent (copula) correlations between same-game leg outcomes, fitted by maximum likelihood on ~80,000 real
+  // leg pairs from 2025-26 games (walk-forward projections, real box scores) and checked on 2026-27.
+  // Cross-player props are close to independent; a player's line moves with his team's total and result; the
+  // same player's stats move together very unevenly (points ↔ threes 0.70, assists ↔ PRA only 0.40).
+  const SK = (s) => (s === 'pr' || s === 'pa' ? 'pra' : s === 'ra' ? 'reb' : ['pts', 'reb', 'ast', 'fg3m', 'pra'].includes(s) ? s : 'oth');
+  const pairKey = (x, y) => [SK(x), SK(y)].sort().join('-');
+  const R_TEAM = { 'pts-pts': 0, 'pra-pra': 0.05, 'pra-pts': 0, 'fg3m-pts': 0, 'fg3m-pra': 0, 'fg3m-fg3m': 0.07, 'ast-pts': 0.09, 'ast-pra': 0.1, 'ast-fg3m': 0.05, 'ast-ast': 0.06, 'ast-reb': 0.03, 'pts-reb': 0, 'pra-reb': 0, 'fg3m-reb': -0.03, 'reb-reb': 0 };
+  const R_OPP = { 'pts-pts': 0.05, 'pra-pra': 0.02, 'pra-pts': 0.02, 'ast-pts': 0.07, 'ast-pra': 0.02, 'ast-ast': 0.07, 'reb-reb': -0.07, 'pts-reb': 0.02, 'pra-reb': 0, 'ast-reb': 0, 'fg3m-pts': 0.03, 'fg3m-pra': 0.04, 'fg3m-fg3m': 0, 'ast-fg3m': 0, 'fg3m-reb': 0.02 };
+  const R_SAME = { 'pra-pts': 0.78, 'pra-reb': 0.62, 'ast-pra': 0.4, 'fg3m-pts': 0.7, 'fg3m-pra': 0.6, 'pts-reb': 0.25, 'ast-pts': 0.2, 'ast-reb': 0.2, 'ast-fg3m': 0.12, 'fg3m-reb': 0.05 };
+  const R_GAME_TOT = { pts: 0.23, pra: 0.27, ast: 0.17, fg3m: 0.15, reb: 0.08, oth: 0.05 };
+  const R_OWN_TT = { pts: 0.26, pra: 0.28, ast: 0.27, fg3m: 0.19, reb: 0.1, oth: 0.05 };
+  const R_OPP_TT = { pts: 0.07, pra: 0.07, ast: 0.07, fg3m: 0.04, reb: 0, oth: 0 };
+  const R_OWN_WIN = { pts: 0.14, pra: 0.16, ast: 0.06, fg3m: 0.05, reb: 0.07, oth: 0.03 };
+  const R_OPP_WIN = { pts: -0.1, pra: -0.15, ast: -0.1, fg3m: -0.08, reb: -0.04, oth: -0.03 };
+  const sameR = (x, y) => R_SAME[pairKey(x, y)] ?? 0.2;
   // correlation between the two legs' success events; null = barred pairing; reason string for the report
   function rho(a, b) {
     if (a.gameId !== b.gameId) return { r: 0, why: 'separate games — independent' };
@@ -52,24 +67,23 @@ const PARLAY = (() => {
     const seg = a.seg || b.seg ? 0.5 : 1;
     if (a.fam === 'prop' && b.fam === 'prop') {
       if (a.player === b.player) return null; // same player stacking: redundant exposure
+      const k = pairKey(a.stat, b.stat);
       if (a.team === b.team) {
-        if ((a.stat === 'ast' && /pts|pra|pa|fg3m/.test(b.stat)) || (b.stat === 'ast' && /pts|pra|pa|fg3m/.test(a.stat))) return { r: 0.12, why: 'teammate assist ↔ teammate scoring share the same made baskets' };
-        if (a.stat === 'reb' && b.stat === 'reb') return { r: -0.06, why: 'teammates compete for the same rebounds' };
-        if (/pts|pra/.test(a.stat) && /pts|pra/.test(b.stat)) return { r: -0.05, why: 'teammates compete for the same shot volume' };
-        return { r: 0.02, why: 'teammates — shared minutes environment' };
+        const r = R_TEAM[k] ?? 0.02;
+        return { r, why: r >= 0.05 ? 'teammate assists and teammate scoring come from the same made baskets (measured +' + r.toFixed(2) + ')' : r < 0 ? 'teammates compete for the same rebounds / shots (measured ' + r.toFixed(2) + ')' : 'teammates — measured almost independent' };
       }
-      if (/pts|pra|pa|fg3m/.test(a.stat) && /pts|pra|pa|fg3m/.test(b.stat)) return { r: 0.06, why: 'opposing scorers share the possession count' };
-      return { r: 0.03, why: 'opposing players share the possession count' };
+      const r = R_OPP[k] ?? 0.02;
+      return { r, why: r < 0 ? 'opposing players fight for the same rebounds (measured ' + r.toFixed(2) + ')' : 'opposing players — measured almost independent (shared pace only)' };
     }
     const prop = a.fam === 'prop' ? a : b.fam === 'prop' ? b : null, line = prop === a ? b : a;
     if (prop) {
-      const w = PTS_LIKE[prop.stat] ?? 0.4;
-      if (line.kind === 'total') return { r: (line.over ? 0.25 : -0.25) * w * seg, why: line.over ? `game Over and ${prop.name} ${MODEL.SHORT[prop.stat]} both scale with possessions and scoring efficiency` : `game Under suppresses ${prop.name}'s volume (counter-acting script)` };
-      if (line.kind === 'teamtotal') return { r: (line.team === prop.team ? (line.over ? 0.35 : -0.35) : (line.over ? 0.05 : -0.05)) * w * seg, why: line.team === prop.team ? `${prop.name} is a direct component of the team total` : 'opponent team total — pace link only' };
+      const s0 = SK(prop.stat), nm = prop.name, S = MODEL.SHORT[prop.stat] || prop.stat;
+      if (line.kind === 'total') { const r = R_GAME_TOT[s0] * seg; return { r: line.over ? r : -r, why: line.over ? `a high-scoring game lifts ${nm}'s ${S} (measured +${r.toFixed(2)})` : `a low-scoring game drags ${nm}'s ${S} down (measured −${r.toFixed(2)})` }; }
+      if (line.kind === 'teamtotal') { const own = line.team === prop.team, r = (own ? R_OWN_TT : R_OPP_TT)[s0] * seg; return { r: line.over ? r : -r, why: own ? `${nm} is part of his team's total (measured ${line.over ? '+' : '−'}${r.toFixed(2)})` : `opponent's total — pace link only (measured ${line.over ? '+' : '−'}${r.toFixed(2)})` }; }
       if (line.kind === 'ot') return { r: line.over ? 0.05 : 0, why: 'overtime adds 5 minutes of volume' };
       // team side (ml / spread / margin)
-      const r = (line.team === prop.team ? 0.12 : -0.08) * w * seg;
-      return { r, why: line.team === prop.team ? `${prop.name}'s production feeds his team's margin` : `${prop.name} plays for the side the line is against (counter-acting script)` };
+      const own = line.team === prop.team, r = (own ? R_OWN_WIN : R_OPP_WIN)[s0] * seg;
+      return { r, why: own ? `${nm}'s big nights and his team's wins go together (measured +${r.toFixed(2)})` : `${nm} plays for the team this line bets against (measured ${r.toFixed(2)})` };
     }
     // two game lines in the same game
     const sides = (x) => ['ml', 'spread', 'margin'].includes(x.kind);
@@ -146,8 +160,8 @@ const PARLAY = (() => {
     const S = (x) => MODEL.SHORT[x] || x;
     if (a.fam === 'prop' && b.fam === 'prop' && a.player === b.player) {
       if (a.stat === b.stat) return { r: 0.97, flag: 'nested', why: `two lines on ${a.name}’s ${S(a.stat)} — the higher line already includes the lower one` };
-      const inC = (x, y) => (MODEL.COMBO[x] || []).includes(y) || (MODEL.COMBO[x] && MODEL.COMBO[y] && MODEL.COMBO[x].some((k) => MODEL.COMBO[y].includes(k)));
-      return { r: inC(a.stat, b.stat) || inC(b.stat, a.stat) ? 0.7 : 0.3, flag: 'same-player', why: `both need a big night from ${a.name} — one cold game or early exit sinks both` };
+      const r = sameR(a.stat, b.stat);
+      return { r, flag: 'same-player', why: `both need a big night from ${a.name} (measured link ${r.toFixed(2)}) — one cold game or early exit sinks both` };
     }
     const ov = overlap(a, b), sides = (x) => ['ml', 'spread', 'margin'].includes(x.kind), tot = (x) => x.kind === 'total' || x.kind === 'teamtotal';
     if (sides(a) && sides(b)) {
@@ -269,5 +283,5 @@ const PARLAY = (() => {
     const stress = `Roster verification — ${inj}. Fatigue — ${fat}. Minimum single-leg edge ${legs.some((l) => l.p.netEdge == null) ? 'n/a (a leg has no price)' : U.signed(Math.min(...legs.map((l) => l.p.netEdge)) * 100, 2) + '%'}; minimum pairwise ρ ${c.minR >= 0 ? '+' : ''}${c.minR.toFixed(2)} (no counter-acting scripts). Allocation carries a ${legs.length === 3 ? '0.70' : '0.85'} multi-leg variance haircut.`;
     return [{ k: 'syn', title: 'COMPOUND EDGE SYNERGY', t: synergy }, { k: 'script', title: 'GAME SCRIPT & PACING CROSS-CORRELATION', t: script }, { k: 'stress', title: 'COMPOUNDING STRESS-TEST DEFENSE', t: stress }];
   }
-  return { build, report, toAm, rho, bvn, joint2, jointN, relation, metrics, legOf, haircutN, growthOf };
+  return { build, report, toAm, rho, bvn, joint2, jointN, relation, metrics, legOf, haircutN, growthOf, evalCombo };
 })();
